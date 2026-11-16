@@ -105,14 +105,23 @@ Details: [ADR 0004](docs/adr/0004-zero-downtime-migrations.md), [ADR 0005](docs/
 
 ## Resilience: proven on every push
 
-Chaos experiments run under a constant **20 writes/s** (k6), and every acknowledged write is checked afterwards.
-See the latest run's Summary page for the measured numbers.
+Chaos experiments run under a constant **20 writes/s** (k6) plus background traffic, and every acknowledged
+write is checked against the database afterwards. Latest measured run:
 
-| Experiment | What it proves |
+| Experiment | New primary after | Longest write gap | Failed requests | Acknowledged writes | **Lost (RPO)** | Primaries accepting writes |
+|---|---|---|---|---|---|---|
+| Kill the primary pod (force delete, no grace period) | 21.5 s | 33.8 s | 257 | 2,548 | **0** | — |
+| Cut the primary off the network for 60 s (packets dropped at its node) | 51.2 s | 61.8 s | 568 | 2,059 | **0** | **1** (old primary fenced) |
+
+| Restore drill | Result |
 |---|---|
-| Kill the primary pod (force delete, no grace period) | automatic failover; time to new primary and longest write gap measured; **0 acknowledged writes lost** |
-| Cut the primary off the network for 60 s (packets dropped at its node) | no split brain: exactly **one** instance accepts writes; old primary rejoins as a replica; **0 lost** |
-| Point-in-time restore drill | a backup restored from S3 to an exact second contains what it should, and nothing after |
+| Point-in-time restore from S3 (base backup + WAL) to a chosen second | ✅ 57 s; row written 2 s before the target present, row 2 s after absent |
+
+**Reading the numbers.** Zero data loss and no split brain are guaranteed by design (quorum sync replication,
+failover quorum, the instance manager's isolation check) and hold in every run. Recovery *time* is the tunable
+part: the isolation case is dominated by liveness-probe and isolation-check timeouts (~30 s by default), which
+trade faster failover against false positives on a flaky network. Next tuning steps: shorter
+`livenessProbeTimeout`, and client-side `statement_timeout` so requests fail fast instead of waiting 20 s.
 
 Details: [ADR 0006](docs/adr/0006-resilience-testing.md).
 

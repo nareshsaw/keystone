@@ -3,6 +3,7 @@ name: keystone-ci
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
   workflow_dispatch: # lets the FinOps advisor run these guardrails on the PRs it opens
 
