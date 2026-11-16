@@ -42,7 +42,7 @@ jobs:
           ./gator verify policies/tests/... -v
       - name: Render the self-service composition (crossplane render)
         run: |
-          curl -sSL "https://releases.crossplane.io/stable/v2.4.3/bin/linux_amd64/crank" -o crossplane && chmod +x crossplane
+          curl -sSfL "https://cli.crossplane.io/stable/v2.4.3/bin/linux_amd64/crossplane" -o crossplane && chmod +x crossplane
           for xr in examples/render/*.yaml; do
             echo "== $xr"
             ./crossplane render "$xr" gitops/platform/self-service/composition.yaml gitops/platform/self-service/functions.yaml \
