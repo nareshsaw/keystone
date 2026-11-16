@@ -1,9 +1,5 @@
 # Production-shaped AWS footprint for Keystone. Not applied by CI (validated only), so it costs nothing.
 
-data "aws_availability_zones" "available" {
-  state = "available"
-}
-
 data "aws_caller_identity" "current" {}
 
 locals {
@@ -17,7 +13,7 @@ locals {
 # ------------------------------------------------------------------ network
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 6.7"
+  version = "6.7.3"
 
   name = var.name
   cidr = var.vpc_cidr
@@ -37,7 +33,7 @@ module "vpc" {
 # ------------------------------------------------------------------ EKS
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.29"
+  version = "21.29.0"
 
   name               = var.name
   kubernetes_version = var.kubernetes_version
@@ -74,7 +70,7 @@ module "eks" {
 
 module "karpenter" {
   source  = "terraform-aws-modules/eks/aws//modules/karpenter"
-  version = "~> 21.29"
+  version = "21.29.0"
 
   cluster_name                    = module.eks.cluster_name
   node_iam_role_use_name_prefix   = false

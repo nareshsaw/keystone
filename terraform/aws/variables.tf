@@ -10,6 +10,16 @@ variable "region" {
   default     = "ap-south-1"
 }
 
+variable "availability_zones" {
+  description = "Exactly three AZs, pinned so the subnet layout never changes when AWS adds a zone."
+  type        = list(string)
+  default     = ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
+  validation {
+    condition     = length(var.availability_zones) == 3
+    error_message = "Provide exactly three availability zones."
+  }
+}
+
 variable "kubernetes_version" {
   description = "EKS Kubernetes version."
   type        = string

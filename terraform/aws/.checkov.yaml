@@ -4,3 +4,4 @@ skip-check:
   - CKV_AWS_144  # Cross-region replication: single-region by design here; enable for a real DR tier
   - CKV_AWS_145  # Customer-managed KMS key: AWS-managed aws:kms key is used to avoid per-key cost
   - CKV2_AWS_62  # S3 event notifications: not needed for backup storage
+  - CKV_TF_1     # Registry modules are pinned to exact versions and updated by Dependabot instead of git SHAs

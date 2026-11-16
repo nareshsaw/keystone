@@ -33,7 +33,7 @@ grep -q "^ANY 1" <<<"$SSN" || fail "Synchronous replication" "synchronous_standb
 [[ $(grep -o "quorum" <<<"$REPL" | wc -l) -eq 2 ]] || fail "Synchronous replication" "replicas: $REPL"
 row "Zero-data-loss replication" "✅" "\`$SSN\` · replicas: $REPL"
 
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   ARCH=$(kubectl -n "$NS" get cluster "$CLUSTER" -o jsonpath='{.status.conditions[?(@.type=="ContinuousArchiving")].status}')
   [[ "$ARCH" == "True" ]] && break
   sleep 10
@@ -41,7 +41,7 @@ done
 [[ "$ARCH" == "True" ]] || fail "WAL archiving" "ContinuousArchiving=$ARCH"
 row "Continuous WAL archiving" "✅" "WAL segments shipped to the S3 object store over TLS"
 
-for i in $(seq 1 60); do
+for _ in $(seq 1 60); do
   PHASE=$(kubectl -n "$NS" get backups -o json 2>/dev/null \
     | jq -r --arg c "$CLUSTER" '[.items[] | select(.spec.cluster.name==$c and .status.phase=="completed")] | if length>0 then "completed" else "" end')
   [[ "$PHASE" == "completed" ]] && break
