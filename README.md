@@ -56,11 +56,16 @@ CI renders the composition (`crossplane render`) and asserts the price, and `gat
 
 A weekly job reads **real usage** from Prometheus and proposes right-sizing as a pull request:
 
-| Database | Env | Tier | p95 CPU | Writes/s | Clients | Action | Now | After |
-|---|---|---|---|---|---|---|---|---|
-| inventory-db | dev | small | ~1% | 0 | 0 | 💤 hibernate | $7.22 | $0.28 |
-| analytics-db | dev | medium | ~2% | ~0.5 | 1 | ⬇ small | $30.56 | $7.22 |
-| orders-db | prod | small | — | — | — | — right-sized | $21.45 | $21.45 |
+Real output from CI (5-minute window on kind):
+
+| Database | Env | Tier | p95 CPU (of request) | Writes/s | App clients | Recommendation | Now | After | Guardrails |
+|---|---|---|---|---|---|---|---|---|---|
+| analytics-db | dev | medium | 7.7% | 0.63 | 1 | ⬇ small | $30.56 | $7.22 | ✅ accepted |
+| inventory-db | dev | small | — | 0 | 0 | 💤 hibernate | $7.22 | $0.28 | ✅ accepted |
+| orders-db | prod | small | 92.7% | 1.72 | 4 | ⬆ medium (reliability) | $21.45 | $89.69 | ⛔ held back: over the $60 budget |
+
+**Saves $30.28/month** on two databases, and flags that prod is running hot, but the upsize goes to the owner
+for a budget decision instead of into the PR, because Gatekeeper rejects it.
 
 How it stays safe:
 1. **Rules decide, AI explains.** Recommendations and every dollar figure come from deterministic rules
