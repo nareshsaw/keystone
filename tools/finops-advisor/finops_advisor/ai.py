@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+import urllib.error
 import urllib.request
 
 ENDPOINT = "https://models.github.ai/inference/chat/completions"
@@ -57,10 +58,18 @@ def write_with_ai(findings: list[dict], total: float, token: str, model: str, in
     req = urllib.request.Request(
         ENDPOINT, data=json.dumps(payload).encode(), method="POST",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
-                 "Accept": "application/json"},
+                 "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        body = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw = r.read().decode("utf-8", "replace")
+            status = r.status
+    except urllib.error.HTTPError as exc:  # surface rate limits / permission problems clearly
+        raise RuntimeError(f"HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:300]}") from exc
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"HTTP {status}, non-JSON response: {raw[:300]!r}") from exc
     return body["choices"][0]["message"]["content"].strip()
 
 

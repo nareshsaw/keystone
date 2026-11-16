@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--out", default="finops-out", type=Path)
     ap.add_argument("--apply", action="store_true", help="edit tenant manifests with the proposed changes")
     ap.add_argument("--ai", action="store_true", help="write the explanation with GitHub Models")
-    ap.add_argument("--model", default=os.environ.get("FINOPS_MODEL", "openai/gpt-4.1-mini"))
+    ap.add_argument("--model", default=os.environ.get("FINOPS_MODEL", "openai/gpt-4.1"))
     args = ap.parse_args(argv)
 
     prices = PriceModel.from_repo(args.repo)
