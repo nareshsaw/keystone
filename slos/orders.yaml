@@ -16,7 +16,8 @@ spec:
       description: 99.9% of orders API requests succeed (non-5xx), measured at the app.
       sli:
         events:
-          errorQuery: sum(rate(http_requests_total{namespace="orders",route!~"/healthz|/readyz|/metrics",code=~"5.."}[{{.window}}]))
+          # "or vector(0)": with zero errors there is no 5xx series at all, and the SLI must read 0, not "no data".
+          errorQuery: (sum(rate(http_requests_total{namespace="orders",route!~"/healthz|/readyz|/metrics",code=~"5.."}[{{.window}}])) or vector(0))
           totalQuery: sum(rate(http_requests_total{namespace="orders",route!~"/healthz|/readyz|/metrics"}[{{.window}}]))
       alerting:
         name: OrdersHighErrorRate
