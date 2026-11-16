@@ -12,7 +12,7 @@ for db in orders/orders-db inventory/inventory-db; do
   kubectl -n "${db%/*}" wait --for=condition=Ready "postgresdatabase/${db#*/}" --timeout=900s >/dev/null \
     || { row "Self-service: ${db#*/}" "❌" "not Ready"; FAILED=1; continue; }
   read -r inst cost phase < <(kubectl -n "${db%/*}" get postgresdatabase "${db#*/}" \
-    -o jsonpath='{.status.instances} {.status.estimatedMonthlyCostUSD} {.status.phase}')
+    -o jsonpath='{.status.instances} {.status.estimatedMonthlyCostUSD} {.status.phase}{"\n"}')
   row "Self-service: ${db#*/} (${db%/*})" "✅" "${inst} instance(s) · ${phase} · est. ${cost}/month"
 done
 

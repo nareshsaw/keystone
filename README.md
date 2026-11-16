@@ -31,7 +31,7 @@ backup store and a PgBouncer pooler, then reports the **estimated monthly cost**
 ```console
 $ kubectl get postgresdatabases -A
 NAMESPACE   NAME           ENV    TIER    INSTANCES   COST/MONTH   STATUS                     SYNCED   READY
-inventory   inventory-db   dev    small   1           $7.48        Cluster in healthy state   True     True
+inventory   inventory-db   dev    small   1           $7.22        Cluster in healthy state   True     True
 orders      orders-db      prod   small   3           $21.45       Cluster in healthy state   True     True
 ```
 
