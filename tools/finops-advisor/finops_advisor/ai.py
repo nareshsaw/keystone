@@ -19,18 +19,18 @@ the PR). Mention databases with no action in one line. Start with a one-paragrap
 total monthly saving. Use Markdown with a heading per database. Be concise and factual."""
 
 
-def allowed_amounts(findings: list[dict], total: float) -> set[str]:
-    amounts = {f"{total:.2f}"}
+def allowed_amounts(findings: list[dict], total: float, increase: float = 0.0) -> set[str]:
+    amounts = {f"{total:.2f}", f"{increase:.2f}", f"{abs(total - increase):.2f}"}
     for f in findings:
         for k in ("current_cost", "proposed_cost", "monthly_saving"):
             amounts.add(f"{abs(f[k]):.2f}")
     return amounts
 
 
-def validate(text: str, findings: list[dict], total: float) -> list[str]:
+def validate(text: str, findings: list[dict], total: float, increase: float = 0.0) -> list[str]:
     """Return problems; empty means the AI text is safe to publish."""
     problems = []
-    allowed = allowed_amounts(findings, total)
+    allowed = allowed_amounts(findings, total, increase)
     for amount in re.findall(r"\$\s?(-?[0-9][0-9,]*(?:\.[0-9]+)?)", text):
         norm = f"{abs(float(amount.replace(',', ''))):.2f}"
         if norm not in allowed:
@@ -41,14 +41,17 @@ def validate(text: str, findings: list[dict], total: float) -> list[str]:
     return problems
 
 
-def write_with_ai(findings: list[dict], total: float, token: str, model: str, timeout: float = 60) -> str:
+def write_with_ai(findings: list[dict], total: float, token: str, model: str, increase: float = 0.0,
+                  timeout: float = 60) -> str:
     payload = {
         "model": model,
         "temperature": 0.1,
         "max_tokens": 1200,
         "messages": [
             {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps({"total_monthly_saving_usd": total, "findings": findings}, indent=2)},
+            {"role": "user", "content": json.dumps({"total_monthly_saving_usd": total,
+                                                    "total_monthly_increase_for_reliability_usd": increase,
+                                                    "findings": findings}, indent=2)},
         ],
     }
     req = urllib.request.Request(
@@ -61,8 +64,12 @@ def write_with_ai(findings: list[dict], total: float, token: str, model: str, ti
     return body["choices"][0]["message"]["content"].strip()
 
 
-def template(findings: list[dict], total: float) -> str:
-    lines = [f"The FinOps advisor found **${total:.2f}/month** in savings from observed usage.", ""]
+def template(findings: list[dict], total: float, increase: float = 0.0) -> str:
+    lines = [f"The FinOps advisor found **${total:.2f}/month** in savings from observed usage."]
+    if increase:
+        lines.append(f"It also recommends **+${increase:.2f}/month** of upsizing where databases are running hot "
+                     "(reliability over cost; needs human review).")
+    lines.append("")
     for f in findings:
         if f["action"] in ("hibernate", "downsize", "upsize"):
             change = "hibernate (stop compute, keep data)" if f["action"] == "hibernate" else f"{f['tier']} → {f['proposed_tier']}"

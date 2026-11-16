@@ -126,3 +126,13 @@ def test_ai_text_missing_a_database_is_rejected():
 def test_idle_signal_ignores_exporter_commits():
     q = queries("inventory", "inventory-db", "inventory", "5m")
     assert "xact_commit" not in q["writes_per_s"] and "tup_inserted" in q["writes_per_s"]
+
+
+def test_pooler_auth_role_is_not_an_app_client():
+    q = queries("inventory", "inventory-db", "inventory", "5m")
+    assert "cnpg_pooler_pgbouncer" in q["max_app_connections"]
+
+
+def test_ai_may_quote_the_reliability_increase():
+    text = "Save $6.94/month. orders-db upsize adds $68.24/month for reliability. inventory-db idle."
+    assert ai.validate(text, FINDINGS, 6.94, 68.24) == []

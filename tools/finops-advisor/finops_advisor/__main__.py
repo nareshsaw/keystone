@@ -57,7 +57,9 @@ def main(argv: list[str] | None = None) -> int:
         findings.append(evaluate(db, usage, prices).to_dict())
     findings.sort(key=lambda f: -f["monthly_saving"])
     actionable = [f for f in findings if f["action"] in ("hibernate", "downsize", "upsize")]
-    total = round(sum(f["monthly_saving"] for f in actionable), 2)
+    saving = round(sum(f["monthly_saving"] for f in actionable if f["monthly_saving"] > 0), 2)
+    increase = round(-sum(f["monthly_saving"] for f in actionable if f["monthly_saving"] < 0), 2)
+    total = saving  # headline: money saved; reliability upsizes are reported separately
 
     changed = []
     if args.apply:
@@ -69,12 +71,12 @@ def main(argv: list[str] | None = None) -> int:
                 path.write_text(after)
                 changed.append(str(path.relative_to(args.repo)))
 
-    narrative, source = ai.template(findings, total), "template"
+    narrative, source = ai.template(findings, total, increase), "template"
     if args.ai and actionable:
         token = os.environ.get("GITHUB_TOKEN", "")
         try:
-            text = ai.write_with_ai(findings, total, token, args.model)
-            problems = ai.validate(text, findings, total)
+            text = ai.write_with_ai(findings, total, token, args.model, increase)
+            problems = ai.validate(text, findings, total, increase)
             if problems:
                 print(f"AI text rejected by guardrail: {problems}", file=sys.stderr)
             else:
@@ -84,7 +86,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args.out.mkdir(parents=True, exist_ok=True)
     report = "\n".join([
-        f"## FinOps advisor: ${total:.2f}/month potential savings", "",
+        f"## FinOps advisor: save ${saving:.2f}/month"
+        + (f" · reliability upsizes +${increase:.2f}/month (need review)" if increase else ""), "",
         f"Observed window: `{args.window}` · Prices: `gitops/platform/guardrails-constraints` · Write-up: {source}", "",
         table(findings), "", narrative, "",
         "---", "*Numbers are computed by deterministic rules from Prometheus data; AI only writes the explanation "
@@ -92,7 +95,8 @@ def main(argv: list[str] | None = None) -> int:
         "Gatekeeper guardrails and needs a human to merge.*",
     ])
     (args.out / "report.md").write_text(report + "\n")
-    (args.out / "findings.json").write_text(json.dumps({"total_monthly_saving": total, "changed_files": changed,
+    (args.out / "findings.json").write_text(json.dumps({"total_monthly_saving": saving,
+                                                        "total_monthly_increase": increase, "changed_files": changed,
                                                         "findings": findings}, indent=2))
     print(report)
     return 0

@@ -13,7 +13,7 @@ class Usage:
     cpu_p95_cores: float | None  # 95th percentile CPU of the busiest instance
     mem_max_bytes: float | None  # peak memory working set of any instance
     writes_per_s: float          # rows inserted/updated/deleted per second (monitoring never writes)
-    max_app_connections: float   # peak client connections (excluding postgres/replication)
+    max_app_connections: float   # peak client connections (excluding superuser, replication, pooler auth)
     db_size_bytes: float | None
 
 
@@ -49,7 +49,7 @@ def queries(ns: str, name: str, db: str, window: str) -> dict[str, str]:
             f' + sum(rate(cnpg_pg_stat_database_tup_deleted{{{pod},datname="{db}"}}[{window}]))'
         ),
         "max_app_connections": (
-            f'max_over_time(sum(cnpg_backends_total{{{pod},datname="{db}",usename!~"postgres|streaming_replica"}})[{window}:15s])'
+            f'max_over_time(sum(cnpg_backends_total{{{pod},datname="{db}",usename!~"postgres|streaming_replica|cnpg_pooler_pgbouncer"}})[{window}:15s])'
         ),
         "db_size_bytes": f'max(cnpg_pg_database_size_bytes{{{pod},datname="{db}"}})',
     }
