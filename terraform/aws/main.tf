@@ -3,7 +3,7 @@
 data "aws_caller_identity" "current" {}
 
 locals {
-  azs = slice(data.aws_availability_zones.available.names, 0, 3)
+  azs = var.availability_zones
   tags = {
     Project   = var.name
     ManagedBy = "terraform"
