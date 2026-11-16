@@ -128,9 +128,9 @@ def test_idle_signal_ignores_exporter_commits():
     assert "xact_commit" not in q["writes_per_s"] and "tup_inserted" in q["writes_per_s"]
 
 
-def test_pooler_auth_role_is_not_an_app_client():
+def test_cnpg_system_roles_are_not_app_clients():
     q = queries("inventory", "inventory-db", "inventory", "5m")
-    assert "cnpg_pooler_pgbouncer" in q["max_app_connections"]
+    assert "cnpg_.*" in q["max_app_connections"]  # cnpg_metrics_exporter, cnpg_pooler_pgbouncer
 
 
 def test_ai_may_quote_the_reliability_increase():

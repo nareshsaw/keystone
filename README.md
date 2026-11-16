@@ -73,8 +73,9 @@ How it stays safe:
 4. **Humans merge.** Prod changes are flagged for review; prod is never hibernated; no recommendation is made
    without enough data; under-provisioned databases get an *upsize* (FinOps is about value, not only cuts).
 
-Idle detection uses row writes and client connections, not commit counts: the CNPG exporter runs a catalog
-query inside every database on each scrape, so an idle database still "commits".
+Idle detection uses row writes and client connections, not commit counts: the CNPG exporter connects to every
+database (as `cnpg_metrics_exporter`) and runs a catalog query on each scrape, so an idle database still
+"commits" and still shows a connection. System roles (`postgres`, `streaming_replica`, `cnpg_*`) are excluded.
 
 ## Observability and SLOs
 
