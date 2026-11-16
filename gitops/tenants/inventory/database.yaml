@@ -8,3 +8,4 @@ spec:
   databaseName: inventory
   owner: team-inventory
   costCenter: CC-2002
+  hibernate: true  # proposed by the FinOps advisor
