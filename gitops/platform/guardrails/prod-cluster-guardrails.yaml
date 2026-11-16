@@ -1,0 +1,47 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: keystoneprodpostgres
+  annotations:
+    description: >-
+      Defence in depth: any CloudNativePG Cluster in a prod namespace, whether it came through self-service or
+      was applied by hand, must be highly available, replicate synchronously and archive WAL.
+spec:
+  crd:
+    spec:
+      names:
+        kind: KeystoneProdPostgres
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package keystoneprodpostgres
+
+        obj := input.review.object
+        spec := object.get(obj, "spec", {})
+        is_prod {
+          data.inventory.cluster["v1"]["Namespace"][obj.metadata.namespace].metadata.labels["keystone.io/env"] == "prod"
+        }
+
+        violation[{"msg": msg}] {
+          is_prod
+          object.get(spec, "instances", 1) < 3
+          msg := sprintf("prod Postgres cluster '%v' must run at least 3 instances (has %v)", [obj.metadata.name, object.get(spec, "instances", 1)])
+        }
+
+        violation[{"msg": msg}] {
+          is_prod
+          not wal_archiving
+          msg := sprintf("prod Postgres cluster '%v' must archive WAL to the backup store (barman-cloud plugin with isWALArchiver: true)", [obj.metadata.name])
+        }
+
+        violation[{"msg": msg}] {
+          is_prod
+          not object.get(object.get(spec, "postgresql", {}), "synchronous", false)
+          msg := sprintf("prod Postgres cluster '%v' must use synchronous replication (spec.postgresql.synchronous)", [obj.metadata.name])
+        }
+
+        wal_archiving {
+          p := spec.plugins[_]
+          p.name == "barman-cloud.cloudnative-pg.io"
+          p.isWALArchiver == true
+        }

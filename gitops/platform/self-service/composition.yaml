@@ -1,0 +1,207 @@
+# Turns a PostgresDatabase request into a production-ready database stack:
+# CNPG Cluster (+ sync replication in prod), ObjectStore + ScheduledBackup, TLS trust, PgBouncer pooler,
+# and reports an estimated monthly cost back to the requester (FinOps showback).
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: postgresdatabase-cnpg
+spec:
+  compositeTypeRef:
+    apiVersion: platform.keystone.io/v1alpha1
+    kind: PostgresDatabase
+  mode: Pipeline
+  pipeline:
+    - step: render-database-stack
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $name := $xr.metadata.name }}
+            {{- $ns := $xr.metadata.namespace }}
+            {{- $spec := $xr.spec }}
+            {{- $observed := .observed.resources | default dict }}
+            {{- $env := $spec.environment }}
+            {{- $tierName := $spec.tier | default "small" }}
+
+            {{- /* Tier catalogue. Keep in sync with gitops/platform/guardrails-constraints (policy cost model). */}}
+            {{- $small := dict "cpu" "250m" "cpuCores" 0.25 "memory" "512Mi" "memoryGB" 0.5 "storageGB" 2 "maxConnections" "100" "sharedBuffers" "128MB" }}
+            {{- $medium := dict "cpu" "1" "cpuCores" 1.0 "memory" "2Gi" "memoryGB" 2.0 "storageGB" 20 "maxConnections" "200" "sharedBuffers" "512MB" }}
+            {{- $large := dict "cpu" "4" "cpuCores" 4.0 "memory" "8Gi" "memoryGB" 8.0 "storageGB" 100 "maxConnections" "400" "sharedBuffers" "2GB" }}
+            {{- $tier := get (dict "small" $small "medium" $medium "large" $large) $tierName }}
+            {{- $instances := get (dict "dev" 1 "staging" 2 "prod" 3) $env }}
+            {{- $storage := $spec.storageGB | default (get $tier "storageGB") }}
+            {{- $hibernate := $spec.hibernate | default false }}
+            {{- $backup := $spec.backup | default dict }}
+            {{- $backupEnabled := true }}{{ if hasKey $backup "enabled" }}{{ $backupEnabled = $backup.enabled }}{{ end }}
+            {{- $pooler := $spec.pooler | default dict }}
+            {{- $poolerEnabled := true }}{{ if hasKey $pooler "enabled" }}{{ $poolerEnabled = $pooler.enabled }}{{ end }}
+            {{- $dbName := $spec.databaseName | default "app" }}
+
+            {{- /* FinOps: USD/month, approximate AWS ap-south-1 on-demand (m6i, gp3, S3 Standard). */}}
+            {{- $compute := 0.0 }}
+            {{- if not $hibernate }}{{ $compute = mulf (addf (mulf (get $tier "cpuCores") 0.03) (mulf (get $tier "memoryGB") 0.004)) $instances 730 }}{{ end }}
+            {{- $storageCost := mulf $instances $storage 0.0912 }}
+            {{- $backupCost := 0.0 }}
+            {{- if $backupEnabled }}{{ $backupCost = mulf $storage 2 0.025 }}{{ end }}
+            {{- $monthly := addf $compute $storageCost $backupCost }}
+
+            {{- $labels := dict "keystone.io/database" $name "keystone.io/tier" $tierName "keystone.io/environment" $env "keystone.io/cost-center" $spec.costCenter "keystone.io/owner" $spec.owner }}
+
+            {{- $clusterReady := false }}
+            {{- if hasKey $observed "cluster" }}
+            {{- if $hibernate }}{{ $clusterReady = true }}
+            {{- else if eq ($observed.cluster | getResourceCondition "Ready").Status "True" }}{{ $clusterReady = true }}{{ end }}
+            {{- end }}
+            ---
+            apiVersion: postgresql.cnpg.io/v1
+            kind: Cluster
+            metadata:
+              name: {{ $name }}
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: cluster
+                {{- if $hibernate }}
+                cnpg.io/hibernation: "on"
+                {{- end }}
+                {{- if $clusterReady }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              instances: {{ $instances }}
+              primaryUpdateStrategy: unsupervised
+              postgresql:
+                {{- if ge (int $instances) 3 }}
+                synchronous:
+                  method: any
+                  number: 1
+                  dataDurability: required
+                  failoverQuorum: true
+                {{- end }}
+                parameters:
+                  max_connections: {{ get $tier "maxConnections" | quote }}
+                  shared_buffers: {{ get $tier "sharedBuffers" | quote }}
+                  log_min_duration_statement: "500"
+              bootstrap:
+                initdb:
+                  database: {{ $dbName }}
+                  owner: {{ $dbName }}
+              storage:
+                size: {{ printf "%.0fGi" (float64 $storage) }}
+              resources:
+                requests: { cpu: {{ get $tier "cpu" | quote }}, memory: {{ get $tier "memory" | quote }} }
+                limits: { memory: {{ get $tier "memory" | quote }} }
+              affinity:
+                enablePodAntiAffinity: true
+                podAntiAffinityType: {{ if gt (int $instances) 1 }}required{{ else }}preferred{{ end }}
+                topologyKey: kubernetes.io/hostname
+              {{- if $backupEnabled }}
+              plugins:
+                - name: barman-cloud.cloudnative-pg.io
+                  isWALArchiver: true
+                  parameters:
+                    barmanObjectName: {{ $name }}-backups
+              {{- end }}
+            {{- if $backupEnabled }}
+            ---
+            apiVersion: barmancloud.cnpg.io/v1
+            kind: ObjectStore
+            metadata:
+              name: {{ $name }}-backups
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: objectstore
+                {{- if hasKey $observed "objectstore" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              retentionPolicy: {{ printf "%.0fd" (float64 ($backup.retentionDays | default 7)) }}
+              configuration:
+                destinationPath: s3://keystone-backups/{{ $ns }}/
+                endpointURL: https://object-store.backup-store.svc:9000
+                endpointCA: { name: {{ $name }}-backup-store-trust, key: ca.crt }
+                s3Credentials:
+                  accessKeyId: { name: backup-store-credentials, key: ACCESS_KEY_ID }
+                  secretAccessKey: { name: backup-store-credentials, key: ACCESS_SECRET_KEY }
+                wal: { compression: gzip, maxParallel: 2 }
+                data: { compression: gzip }
+            ---
+            apiVersion: cert-manager.io/v1
+            kind: Certificate
+            metadata:
+              name: {{ $name }}-backup-store-trust
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: backup-trust
+                {{- if hasKey $observed "backup-trust" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              # Issued so this namespace receives the platform CA (ca.crt) to verify the object store's TLS.
+              secretName: {{ $name }}-backup-store-trust
+              commonName: {{ $name }}-backup-client
+              usages: [client auth]
+              issuerRef: { name: keystone-ca, kind: ClusterIssuer, group: cert-manager.io }
+            ---
+            apiVersion: postgresql.cnpg.io/v1
+            kind: ScheduledBackup
+            metadata:
+              name: {{ $name }}-scheduled
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: scheduled-backup
+                {{- if hasKey $observed "scheduled-backup" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              schedule: {{ $backup.schedule | default "0 0 */6 * * *" | quote }}
+              immediate: true
+              backupOwnerReference: self
+              cluster: { name: {{ $name }} }
+              method: plugin
+              pluginConfiguration:
+                name: barman-cloud.cloudnative-pg.io
+            {{- end }}
+            {{- if and $poolerEnabled (not $hibernate) }}
+            ---
+            apiVersion: postgresql.cnpg.io/v1
+            kind: Pooler
+            metadata:
+              name: {{ $name }}-pooler-rw
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: pooler
+                {{- if hasKey $observed "pooler" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              cluster: { name: {{ $name }} }
+              instances: {{ if eq $env "prod" }}2{{ else }}1{{ end }}
+              type: rw
+              pgbouncer:
+                poolMode: transaction
+                parameters:
+                  max_client_conn: "500"
+                  default_pool_size: "20"
+            {{- end }}
+            ---
+            apiVersion: platform.keystone.io/v1alpha1
+            kind: PostgresDatabase
+            status:
+              instances: {{ $instances }}
+              estimatedMonthlyCostUSD: {{ printf "$%.2f" $monthly | quote }}
+              credentialsSecret: {{ $name }}-app
+              endpoint: {{ if and $poolerEnabled (not $hibernate) }}{{ $name }}-pooler-rw{{ else }}{{ $name }}-rw{{ end }}.{{ $ns }}.svc:5432
+              {{- if hasKey $observed "cluster" }}
+              {{- $c := $observed.cluster.resource }}
+              {{- if $c.status }}
+              phase: {{ if $hibernate }}"Hibernated"{{ else }}{{ $c.status.phase | default "Provisioning" | quote }}{{ end }}
+              primary: {{ $c.status.currentPrimary | default "" | quote }}
+              {{- end }}
+              {{- else }}
+              phase: "Provisioning"
+              {{- end }}

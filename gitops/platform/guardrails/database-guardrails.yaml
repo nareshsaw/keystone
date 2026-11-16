@@ -1,0 +1,86 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: keystonedatabaseguardrails
+  annotations:
+    description: Guardrails and FinOps budget checks for self-service PostgresDatabase requests.
+spec:
+  crd:
+    spec:
+      names:
+        kind: KeystoneDatabaseGuardrails
+      validation:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package keystonedatabaseguardrails
+
+        obj := input.review.object
+        spec := object.get(obj, "spec", {})
+        tier := object.get(spec, "tier", "small")
+        env := object.get(spec, "environment", "")
+        hibernate := object.get(spec, "hibernate", false)
+        backup_enabled := object.get(object.get(spec, "backup", {}), "enabled", true)
+        tier_cfg := input.parameters.tiers[tier]
+        storage_gb := object.get(spec, "storageGB", tier_cfg.defaultStorageGB)
+        instances := input.parameters.instances[env]
+
+        ns_labels := data.inventory.cluster["v1"]["Namespace"][obj.metadata.namespace].metadata.labels
+
+        # ---- FinOps: the same price model the composition uses to report status.estimatedMonthlyCostUSD
+        compute_cost := 0 { hibernate == true }
+        compute_cost := c {
+          hibernate != true
+          p := input.parameters.pricing
+          c := instances * (tier_cfg.cpu * p.vcpuHour + tier_cfg.memoryGB * p.memoryGBHour) * input.parameters.hoursPerMonth
+        }
+        backup_cost := 0 { backup_enabled != true }
+        backup_cost := storage_gb * input.parameters.backupMultiplier * input.parameters.pricing.backupGBMonth { backup_enabled == true }
+        monthly_cost := compute_cost + instances * storage_gb * input.parameters.pricing.storageGBMonth + backup_cost
+
+        violation[{"msg": msg}] {
+          not input.parameters.tiers[tier]
+          msg := sprintf("unknown tier '%v'", [tier])
+        }
+
+        violation[{"msg": msg}] {
+          env == "prod"
+          backup_enabled != true
+          msg := "production databases must have backups enabled (spec.backup.enabled: true)"
+        }
+
+        violation[{"msg": msg}] {
+          env == "prod"
+          hibernate == true
+          msg := "production databases cannot be hibernated"
+        }
+
+        violation[{"msg": msg}] {
+          allowed := input.parameters.allowedTiers[env]
+          not allowed_tier(allowed, tier)
+          msg := sprintf("tier '%v' is not allowed in %v (allowed: %v)", [tier, env, concat(", ", allowed)])
+        }
+
+        violation[{"msg": msg}] {
+          storage_gb > tier_cfg.maxStorageGB
+          msg := sprintf("storageGB %v exceeds the %v-tier maximum of %v", [storage_gb, tier, tier_cfg.maxStorageGB])
+        }
+
+        violation[{"msg": msg}] {
+          ns_env := ns_labels["keystone.io/env"]
+          ns_env != env
+          msg := sprintf("spec.environment '%v' does not match namespace '%v' (keystone.io/env=%v)", [env, obj.metadata.namespace, ns_env])
+        }
+
+        violation[{"msg": msg}] {
+          budget := to_number(ns_labels["keystone.io/monthly-budget-usd"])
+          monthly_cost > budget
+          msg := sprintf("estimated cost $%.2f/month exceeds the namespace budget of $%v/month (keystone.io/monthly-budget-usd)", [monthly_cost, budget])
+        }
+
+        allowed_tier(allowed, t) {
+          allowed[_] == t
+        }

@@ -1,0 +1,11 @@
+# Replicate Namespaces into Gatekeeper's inventory so policies can read tenant labels
+# (environment, owner, cost centre, monthly budget).
+apiVersion: config.gatekeeper.sh/v1alpha1
+kind: Config
+metadata:
+  name: config
+  namespace: gatekeeper-system
+spec:
+  sync:
+    syncOnly:
+      - { group: "", version: v1, kind: Namespace }

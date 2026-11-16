@@ -1,0 +1,7 @@
+# Someone tries to skip self-service and hand-roll a single, unbacked-up Postgres in prod.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: shadow-db, namespace: orders }
+spec:
+  instances: 1
+  storage: { size: 1Gi }

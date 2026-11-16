@@ -1,0 +1,50 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: KeystoneTenantLabels
+metadata:
+  name: tenant-namespaces-have-finops-labels
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - { apiGroups: [""], kinds: [Namespace] }
+    labelSelector:
+      matchExpressions:
+        - { key: keystone.io/tenant, operator: Exists }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: KeystoneDatabaseGuardrails
+metadata:
+  name: database-requests
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - { apiGroups: [platform.keystone.io], kinds: [PostgresDatabase] }
+  parameters:
+    # Keep in sync with the tier catalogue in gitops/platform/self-service/composition.yaml
+    hoursPerMonth: 730
+    backupMultiplier: 2 # base backups + WAL retained ≈ 2x data size
+    pricing: # USD, approximate AWS ap-south-1 on-demand (m6i, gp3, S3 Standard)
+      vcpuHour: 0.03
+      memoryGBHour: 0.004
+      storageGBMonth: 0.0912
+      backupGBMonth: 0.025
+    instances: { dev: 1, staging: 2, prod: 3 }
+    allowedTiers:
+      dev: [small, medium]
+      staging: [small, medium]
+      prod: [small, medium, large]
+    tiers:
+      small: { cpu: 0.25, memoryGB: 0.5, defaultStorageGB: 2, maxStorageGB: 10 }
+      medium: { cpu: 1, memoryGB: 2, defaultStorageGB: 20, maxStorageGB: 100 }
+      large: { cpu: 4, memoryGB: 8, defaultStorageGB: 100, maxStorageGB: 500 }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: KeystoneProdPostgres
+metadata:
+  name: prod-postgres-is-ha-and-backed-up
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - { apiGroups: [postgresql.cnpg.io], kinds: [Cluster] }

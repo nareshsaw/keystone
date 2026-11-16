@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orders
+  labels:
+    keystone.io/tenant: orders
+    keystone.io/env: prod
+    keystone.io/owner: team-orders
+    keystone.io/cost-center: CC-1001
+    keystone.io/monthly-budget-usd: "60"

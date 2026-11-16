@@ -1,0 +1,16 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: KeystoneTenantLabels
+metadata:
+  name: tenant-namespaces-have-finops-labels
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+    - apiGroups:
+      - ''
+      kinds:
+      - Namespace
+    labelSelector:
+      matchExpressions:
+      - key: keystone.io/tenant
+        operator: Exists

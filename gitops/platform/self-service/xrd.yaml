@@ -1,0 +1,85 @@
+# The self-service API: a team asks for a database in ~10 lines of YAML.
+apiVersion: apiextensions.crossplane.io/v2
+kind: CompositeResourceDefinition
+metadata:
+  name: postgresdatabases.platform.keystone.io
+spec:
+  scope: Namespaced
+  group: platform.keystone.io
+  names:
+    kind: PostgresDatabase
+    plural: postgresdatabases
+    shortNames: [pgdb]
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      additionalPrinterColumns:
+        - { name: ENV, type: string, jsonPath: .spec.environment }
+        - { name: TIER, type: string, jsonPath: .spec.tier }
+        - { name: INSTANCES, type: integer, jsonPath: .status.instances }
+        - { name: COST/MONTH, type: string, jsonPath: .status.estimatedMonthlyCostUSD }
+        - { name: STATUS, type: string, jsonPath: .status.phase }
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required: [environment, owner, costCenter]
+              properties:
+                environment:
+                  description: dev = 1 instance, staging = 2, prod = 3 with zero-data-loss replication.
+                  type: string
+                  enum: [dev, staging, prod]
+                tier:
+                  description: Size class. small = 0.25 vCPU / 512Mi, medium = 1 vCPU / 2Gi, large = 4 vCPU / 8Gi per instance.
+                  type: string
+                  enum: [small, medium, large]
+                  default: small
+                storageGB:
+                  description: Data volume per instance. Defaults to the tier size (2 / 20 / 100 GB).
+                  type: integer
+                  minimum: 1
+                  maximum: 500
+                databaseName:
+                  description: Application database (and owner role) to create.
+                  type: string
+                  pattern: "^[a-z][a-z0-9_]{0,62}$"
+                  default: app
+                owner:
+                  description: Owning team, for alerts and showback.
+                  type: string
+                  minLength: 2
+                costCenter:
+                  description: Cost centre that pays for this database (FinOps showback), e.g. CC-1001.
+                  type: string
+                  pattern: "^CC-[0-9]{4}$"
+                hibernate:
+                  description: Stop all instances but keep the data. Saves compute cost for idle non-prod databases.
+                  type: boolean
+                  default: false
+                backup:
+                  type: object
+                  default: {}
+                  properties:
+                    enabled: { type: boolean, default: true }
+                    retentionDays: { type: integer, minimum: 1, maximum: 90, default: 7 }
+                    schedule:
+                      description: Base backup schedule (6-field cron, seconds first). WAL is archived continuously.
+                      type: string
+                      default: "0 0 */6 * * *"
+                pooler:
+                  type: object
+                  default: {}
+                  properties:
+                    enabled: { type: boolean, default: true }
+            status:
+              type: object
+              properties:
+                phase: { type: string }
+                instances: { type: integer }
+                primary: { type: string }
+                endpoint: { type: string }
+                credentialsSecret: { type: string }
+                estimatedMonthlyCostUSD: { type: string }

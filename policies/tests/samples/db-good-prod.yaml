@@ -1,0 +1,8 @@
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata: { name: good-prod, namespace: orders }
+spec:
+  environment: prod
+  tier: small
+  owner: team-orders
+  costCenter: CC-1001

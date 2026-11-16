@@ -1,0 +1,44 @@
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: keystonetenantlabels
+  annotations:
+    description: Every tenant namespace must declare its environment, owner, cost centre and monthly budget (FinOps showback).
+spec:
+  crd:
+    spec:
+      names:
+        kind: KeystoneTenantLabels
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package keystonetenantlabels
+
+        required := {"keystone.io/env", "keystone.io/owner", "keystone.io/cost-center", "keystone.io/monthly-budget-usd"}
+
+        labels := object.get(input.review.object.metadata, "labels", {})
+
+        violation[{"msg": msg}] {
+          some key
+          required[key]
+          not labels[key]
+          msg := sprintf("tenant namespace '%v' is missing required label '%v'", [input.review.object.metadata.name, key])
+        }
+
+        violation[{"msg": msg}] {
+          env := labels["keystone.io/env"]
+          not {"dev", "staging", "prod"}[env]
+          msg := sprintf("label keystone.io/env must be one of dev, staging, prod (got '%v')", [env])
+        }
+
+        violation[{"msg": msg}] {
+          cc := labels["keystone.io/cost-center"]
+          not regex.match(`^CC-[0-9]{4}$`, cc)
+          msg := sprintf("label keystone.io/cost-center must look like CC-1234 (got '%v')", [cc])
+        }
+
+        violation[{"msg": msg}] {
+          budget := labels["keystone.io/monthly-budget-usd"]
+          not regex.match(`^[0-9]{1,6}$`, budget)
+          msg := sprintf("label keystone.io/monthly-budget-usd must be a whole number of dollars (got '%v')", [budget])
+        }

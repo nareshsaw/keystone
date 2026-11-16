@@ -1,0 +1,5 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shadow-team
+  labels: { keystone.io/tenant: shadow, keystone.io/env: production, keystone.io/cost-center: "1234" }

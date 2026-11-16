@@ -1,0 +1,9 @@
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata: { name: too-much-storage, namespace: orders }
+spec:
+  environment: prod
+  tier: small
+  storageGB: 50
+  owner: team-orders
+  costCenter: CC-1001

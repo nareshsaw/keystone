@@ -2,4 +2,4 @@ apiVersion: v2
 name: keystone-bootstrap
 description: App-of-apps that installs the Keystone platform and its tenants, in order (sync waves).
 type: application
-version: 0.2.0
+version: 0.3.0

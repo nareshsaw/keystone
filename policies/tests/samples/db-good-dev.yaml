@@ -1,0 +1,9 @@
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata: { name: good-dev, namespace: inventory }
+spec:
+  environment: dev
+  tier: small
+  owner: team-inventory
+  costCenter: CC-2002
+  hibernate: true

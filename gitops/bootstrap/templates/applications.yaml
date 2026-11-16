@@ -66,6 +66,42 @@ spec:
   source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/pki }
 {{- include "keystone.syncPolicy" . }}
 ---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gatekeeper
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: gatekeeper-system }
+  source:
+    repoURL: https://open-policy-agent.github.io/gatekeeper/charts
+    chart: gatekeeper
+    targetRevision: 3.23.1
+    helm:
+      valuesObject:
+        replicas: 1
+        auditInterval: 60
+{{- include "keystone.syncPolicy" . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: crossplane
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: crossplane-system }
+  source:
+    repoURL: https://charts.crossplane.io/stable
+    chart: crossplane
+    targetRevision: 2.4.3
+{{- include "keystone.syncPolicy" . }}
+---
 # ---------------------------------------------------------------- wave 2: backup plugin
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -83,6 +119,32 @@ spec:
     targetRevision: 0.9.0
 {{- include "keystone.syncPolicy" . }}
 ---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guardrails
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "2" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: gatekeeper-system }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/guardrails }
+{{- include "keystone.syncPolicy" . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: self-service
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "2" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: crossplane-system }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/self-service }
+{{- include "keystone.syncPolicy" . }}
+---
 # ---------------------------------------------------------------- wave 3: S3-compatible backup store
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -97,16 +159,31 @@ spec:
   source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/object-store }
 {{- include "keystone.syncPolicy" . }}
 ---
-# ---------------------------------------------------------------- wave 4: tenants
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: tenant-orders
+  name: guardrails-constraints
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "3" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: gatekeeper-system }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/guardrails-constraints }
+{{- include "keystone.syncPolicy" . }}
+# ---------------------------------------------------------------- wave 4: tenants (one app per folder)
+{{- range .Values.tenants }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant-{{ . }}
   namespace: argocd
   annotations: { argocd.argoproj.io/sync-wave: "4" }
   finalizers: [resources-finalizer.argocd.argoproj.io]
 spec:
   project: default
-  destination: { server: https://kubernetes.default.svc, namespace: orders }
-  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/tenants/orders }
-{{- include "keystone.syncPolicy" . }}
+  destination: { server: https://kubernetes.default.svc, namespace: {{ . }} }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/tenants/{{ . }} }
+{{- include "keystone.syncPolicy" $ }}
+{{- end }}

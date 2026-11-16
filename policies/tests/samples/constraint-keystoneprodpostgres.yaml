@@ -1,0 +1,12 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: KeystoneProdPostgres
+metadata:
+  name: prod-postgres-is-ha-and-backed-up
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+    - apiGroups:
+      - postgresql.cnpg.io
+      kinds:
+      - Cluster

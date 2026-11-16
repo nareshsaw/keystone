@@ -1,98 +1,11 @@
-# Tenant "orders": a highly available PostgreSQL cluster with zero-data-loss replication,
-# continuous WAL archiving, scheduled base backups and a PgBouncer connection pooler.
-apiVersion: postgresql.cnpg.io/v1
-kind: Cluster
+# This is all a team writes to get a production database.
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
 metadata:
   name: orders-db
-  labels: { keystone.io/tenant: orders, keystone.io/tier: small }
 spec:
-  instances: 3
-  primaryUpdateStrategy: unsupervised
-  postgresql:
-    synchronous:
-      method: any          # quorum commit: ANY 1 (replica-a, replica-b)
-      number: 1
-      dataDurability: required
-      failoverQuorum: true # only promote a replica that is guaranteed to have every committed write
-    parameters:
-      max_connections: "100"
-      shared_buffers: 64MB
-      log_min_duration_statement: "500"
-  bootstrap:
-    initdb:
-      database: orders
-      owner: orders
-  storage:
-    size: 1Gi
-  resources:
-    requests: { cpu: 100m, memory: 256Mi }
-    limits: { memory: 512Mi }
-  affinity:
-    enablePodAntiAffinity: true
-    podAntiAffinityType: required        # never two instances on the same node
-    topologyKey: kubernetes.io/hostname
-  plugins:
-    - name: barman-cloud.cloudnative-pg.io
-      isWALArchiver: true
-      parameters:
-        barmanObjectName: orders-backups
----
-# Where backups go. The CA comes from a cert-manager certificate (its secret carries ca.crt).
-apiVersion: barmancloud.cnpg.io/v1
-kind: ObjectStore
-metadata:
-  name: orders-backups
-spec:
-  retentionPolicy: 7d
-  configuration:
-    destinationPath: s3://keystone-backups/
-    endpointURL: https://object-store.backup-store.svc:9000
-    endpointCA: { name: backup-store-trust, key: ca.crt }
-    s3Credentials:
-      accessKeyId: { name: backup-store-credentials, key: ACCESS_KEY_ID }
-      secretAccessKey: { name: backup-store-credentials, key: ACCESS_SECRET_KEY }
-    wal:
-      compression: gzip
-      maxParallel: 2
-    data:
-      compression: gzip
----
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: backup-store-trust
-spec:
-  # Issued only so this namespace receives the platform CA bundle (ca.crt) to trust the object store.
-  secretName: backup-store-trust
-  commonName: orders-backup-client
-  usages: [client auth]
-  issuerRef: { name: keystone-ca, kind: ClusterIssuer, group: cert-manager.io }
----
-apiVersion: postgresql.cnpg.io/v1
-kind: ScheduledBackup
-metadata:
-  name: orders-db-every-6h
-spec:
-  schedule: "0 0 */6 * * *"
-  immediate: true          # take the first backup as soon as the cluster is created
-  backupOwnerReference: self
-  cluster: { name: orders-db }
-  method: plugin
-  pluginConfiguration:
-    name: barman-cloud.cloudnative-pg.io
----
-# PgBouncer in front of the primary: apps connect here, so failovers and connection storms
-# don't reach Postgres directly.
-apiVersion: postgresql.cnpg.io/v1
-kind: Pooler
-metadata:
-  name: orders-db-pooler-rw
-spec:
-  cluster: { name: orders-db }
-  instances: 2
-  type: rw
-  pgbouncer:
-    poolMode: transaction
-    parameters:
-      max_client_conn: "500"
-      default_pool_size: "20"
+  environment: prod      # 3 instances, zero-data-loss replication, backups enforced
+  tier: small
+  databaseName: orders
+  owner: team-orders
+  costCenter: CC-1001

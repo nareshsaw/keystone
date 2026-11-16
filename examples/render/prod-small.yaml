@@ -1,0 +1,12 @@
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata: { name: orders-db, namespace: orders }
+spec:
+  environment: prod
+  tier: small
+  databaseName: orders
+  owner: team-orders
+  costCenter: CC-1001
+  hibernate: false
+  backup: { enabled: true, retentionDays: 7, schedule: "0 0 */6 * * *" }
+  pooler: { enabled: true }

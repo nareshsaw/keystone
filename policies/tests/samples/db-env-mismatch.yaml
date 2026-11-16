@@ -1,0 +1,8 @@
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata: { name: env-mismatch, namespace: inventory }
+spec:
+  environment: prod
+  tier: small
+  owner: team-inventory
+  costCenter: CC-2002

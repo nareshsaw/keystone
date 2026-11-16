@@ -1,0 +1,78 @@
+kind: Suite
+apiVersion: test.gatekeeper.sh/v1alpha1
+metadata:
+  name: keystone-guardrails
+tests:
+  - name: tenant-namespace-labels
+    template: ../../gitops/platform/guardrails/tenant-namespace-labels.yaml
+    constraint: samples/constraint-keystonetenantlabels.yaml
+    cases:
+      - name: complete-labels-pass
+        object: samples/ns-good.yaml
+        assertions: [{ violations: no }]
+      - name: missing-and-malformed-labels-fail
+        object: samples/ns-missing-labels.yaml
+        assertions:
+          - { violations: 4 }
+          - { message: "missing required label 'keystone.io/owner'", violations: 1 }
+          - { message: "missing required label 'keystone.io/monthly-budget-usd'", violations: 1 }
+          - { message: "keystone.io/env must be one of", violations: 1 }
+          - { message: "must look like CC-1234", violations: 1 }
+
+  - name: database-guardrails
+    template: ../../gitops/platform/guardrails/database-guardrails.yaml
+    constraint: samples/constraint-keystonedatabaseguardrails.yaml
+    cases:
+      - name: prod-small-within-budget-passes
+        object: samples/db-good-prod.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ violations: no }]
+      - name: hibernated-dev-passes
+        object: samples/db-good-dev.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ violations: no }]
+      - name: prod-without-backups-denied
+        object: samples/db-prod-no-backup.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ message: "must have backups enabled", violations: 1 }]
+      - name: prod-hibernation-denied
+        object: samples/db-prod-hibernated.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ message: "cannot be hibernated", violations: 1 }]
+      - name: large-tier-in-dev-denied
+        object: samples/db-dev-large.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ message: "tier 'large' is not allowed in dev", violations: 1 }]
+      - name: storage-over-tier-limit-denied
+        object: samples/db-too-much-storage.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ message: "exceeds the small-tier maximum of 10", violations: 1 }]
+      - name: environment-must-match-namespace
+        object: samples/db-env-mismatch.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ message: "does not match namespace 'inventory'", violations: 1 }]
+      - name: over-budget-denied
+        object: samples/db-over-budget.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ message: 'estimated cost \$89\.69/month exceeds the namespace budget of \$60/month', violations: 1 }]
+
+  - name: prod-postgres-defence-in-depth
+    template: ../../gitops/platform/guardrails/prod-cluster-guardrails.yaml
+    constraint: samples/constraint-keystoneprodpostgres.yaml
+    cases:
+      - name: compliant-prod-cluster-passes
+        object: samples/cluster-good-prod.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ violations: no }]
+      - name: hand-rolled-prod-cluster-denied
+        object: samples/cluster-bypass.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions:
+          - { violations: 3 }
+          - { message: "at least 3 instances", violations: 1 }
+          - { message: "archive WAL", violations: 1 }
+          - { message: "synchronous replication", violations: 1 }
+      - name: single-instance-dev-cluster-allowed
+        object: samples/cluster-dev-single.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ violations: no }]

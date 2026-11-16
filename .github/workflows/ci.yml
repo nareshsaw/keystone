@@ -36,6 +36,26 @@ jobs:
             /tmp/apps.yaml gitops/platform gitops/tenants kind/cluster.yaml
       - name: ShellCheck
         run: shellcheck scripts/*.sh
+      - name: Policy tests (Gatekeeper gator)
+        run: |
+          curl -sSL https://github.com/open-policy-agent/gatekeeper/releases/download/v3.23.1/gator-v3.23.1-linux-amd64.tar.gz | tar -xz gator
+          ./gator verify policies/tests/... -v
+      - name: Render the self-service composition (crossplane render)
+        run: |
+          curl -sSL "https://releases.crossplane.io/stable/v2.4.3/bin/linux_amd64/crank" -o crossplane && chmod +x crossplane
+          for xr in examples/render/*.yaml; do
+            echo "== $xr"
+            ./crossplane render "$xr" gitops/platform/self-service/composition.yaml gitops/platform/self-service/functions.yaml \
+              --include-full-xr > "/tmp/render-$(basename "$xr")"
+            cat "/tmp/render-$(basename "$xr")"
+          done
+          grep -qE 'estimatedMonthlyCostUSD: .?\$21\.45' /tmp/render-prod-small.yaml
+          grep -q 'failoverQuorum: true' /tmp/render-prod-small.yaml
+          if grep -q 'kind: Pooler' /tmp/render-dev-hibernated.yaml; then echo "hibernated DB must not get a pooler"; exit 1; fi
+          kubeconform -strict -summary -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -skip PostgresDatabase /tmp/render-*.yaml
       - name: App unit tests
         working-directory: apps/orders
         run: |
@@ -85,11 +105,16 @@ jobs:
         run: scripts/wait-for-apps.sh 1500
       - name: Verify HA, replication, backups and the app
         run: scripts/verify-platform.sh
+      - name: Verify self-service databases and guardrails
+        run: scripts/verify-self-service.sh
       - name: Diagnostics
         if: failure()
         run: |
           kubectl get applications -n argocd -o wide || true
           kubectl get pods -A -o wide || true
+          kubectl get postgresdatabases -A -o wide || true
+          kubectl -n orders describe postgresdatabase orders-db | tail -40 || true
+          kubectl get functions,xrd,compositions || true
           kubectl -n orders get cluster,backups,poolers,objectstores -o wide || true
           kubectl -n orders describe cluster orders-db | tail -60 || true
           kubectl -n cnpg-system logs deploy/plugin-barman-cloud --tail=80 || true

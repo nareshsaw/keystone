@@ -16,10 +16,10 @@ helm repo update argo >/dev/null
 helm upgrade --install argocd argo/argo-cd --version "${ARGOCD_CHART_VERSION}" \
   --namespace argocd --create-namespace -f bootstrap/argocd-values.yaml --wait --timeout 10m
 
-echo "==> Creating backup-store credentials (generated, never committed)"
+echo "==> Creating backup-store credentials for the store and every tenant (generated, never committed)"
 ACCESS_KEY="keystone-$(openssl rand -hex 6)"
 SECRET_KEY="$(openssl rand -hex 24)"
-for ns in backup-store orders; do
+for ns in backup-store $(ls gitops/tenants); do
   kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   if ! kubectl -n "$ns" get secret backup-store-credentials >/dev/null 2>&1; then
     kubectl -n "$ns" create secret generic backup-store-credentials \

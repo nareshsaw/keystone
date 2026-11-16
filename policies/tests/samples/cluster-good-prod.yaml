@@ -1,0 +1,10 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: { name: orders-db, namespace: orders }
+spec:
+  instances: 3
+  postgresql:
+    synchronous: { method: any, number: 1 }
+  plugins:
+    - { name: barman-cloud.cloudnative-pg.io, isWALArchiver: true, parameters: { barmanObjectName: orders-db-backups } }
+  storage: { size: 1Gi }

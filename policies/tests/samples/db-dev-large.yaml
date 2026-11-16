@@ -1,0 +1,8 @@
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata: { name: dev-large, namespace: inventory }
+spec:
+  environment: dev
+  tier: large
+  owner: team-inventory
+  costCenter: CC-2002
