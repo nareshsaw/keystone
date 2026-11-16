@@ -136,3 +136,30 @@ def test_cnpg_system_roles_are_not_app_clients():
 def test_ai_may_quote_the_reliability_increase():
     text = "Save $6.94/month. orders-db upsize adds $68.24/month for reliability. inventory-db idle."
     assert ai.validate(text, FINDINGS, 6.94, 68.24) == []
+
+
+def test_ai_call_reposts_on_redirect(monkeypatch):
+    """A redirected POST must be re-sent as POST with its body, not downgraded to GET."""
+    import io
+    import urllib.error
+
+    seen = []
+
+    class FakeOpener:
+        def open(self, req, timeout):
+            seen.append((req.full_url, req.get_method(), req.data))
+            if len(seen) == 1:
+                raise urllib.error.HTTPError(req.full_url, 307, "redirect",
+                                             {"Location": "https://models.example/v2/chat"}, io.BytesIO(b""))
+            body = b'{"choices":[{"message":{"content":"inventory-db: save $6.94"}}]}'
+
+            class R(io.BytesIO):
+                status = 200
+                def __enter__(self): return self
+                def __exit__(self, *a): return False
+            return R(body)
+
+    monkeypatch.setattr(ai.urllib.request, "build_opener", lambda *_: FakeOpener())
+    out = ai.write_with_ai(FINDINGS, 6.94, "token", "openai/gpt-4.1")
+    assert out == "inventory-db: save $6.94"
+    assert seen[1][0] == "https://models.example/v2/chat" and seen[1][1] == "POST" and seen[1][2]

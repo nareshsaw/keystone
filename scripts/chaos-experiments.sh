@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Phase 6: failure experiments under load, with measured RTO and RPO.
-#   pod-kill           : the primary's pod is killed without warning (node crash, OOM kill)
-#   network-isolation  : the primary loses 100% of its network for 60 s (split-brain scenario)
+#   pod-kill           : the primary's pod is force-deleted with no grace period (crash / OOM kill)
+#   network-isolation  : every packet to and from the primary is dropped for 60 s on its node (split brain)
+# Faults are injected directly (kubectl / iptables in the kind node), the same mechanisms chaos tools use.
 # For each: k6 writes 20 orders/s throughout; we measure time to a new primary, the longest gap in successful
 # writes, failed requests, and whether every acknowledged write survived.
 set -euo pipefail
@@ -43,32 +44,21 @@ YAML
   kubectl -n $NS wait --for=condition=Ready pod -l job-name=write-probe --timeout=120s >/dev/null
   sleep 30                                   # baseline under load
   old=$(primary); t_inject=$(now_ms)
+  local node ip
+  node=$(kubectl -n $NS get pod "$old" -o jsonpath='{.spec.nodeName}')
+  ip=$(kubectl -n $NS get pod "$old" -o jsonpath='{.status.podIP}')
   case $name in
     pod-kill)
-      kubectl -n $NS apply -f - >/dev/null <<YAML
-apiVersion: chaos-mesh.org/v1alpha1
-kind: PodChaos
-metadata: { name: kill-primary }
-spec:
-  action: pod-kill
-  mode: one
-  gracePeriod: 0
-  selector: { pods: { ${NS}: [${old}] } }
-YAML
+      kubectl -n $NS delete pod "$old" --grace-period=0 --force >/dev/null 2>&1
       ;;
     network-isolation)
-      kubectl -n $NS apply -f - >/dev/null <<YAML
-apiVersion: chaos-mesh.org/v1alpha1
-kind: NetworkChaos
-metadata: { name: isolate-primary }
-spec:
-  action: loss
-  mode: one
-  selector: { pods: { ${NS}: [${old}] } }
-  loss: { loss: "100", correlation: "100" }
-  direction: to
-  duration: 60s
-YAML
+      # Drop all traffic of the primary at its node: pod<->pod (FORWARD) and pod<->node/kubelet (INPUT/OUTPUT).
+      # Established connections die too; kubectl exec still works (it goes through the container runtime).
+      docker exec "$node" sh -c "iptables -I FORWARD 1 -s $ip -j DROP && iptables -I FORWARD 1 -d $ip -j DROP \
+        && iptables -I INPUT 1 -s $ip -j DROP && iptables -I OUTPUT 1 -d $ip -j DROP"
+      ( sleep 60; docker exec "$node" sh -c "iptables -D FORWARD -s $ip -j DROP; iptables -D FORWARD -d $ip -j DROP; \
+          iptables -D INPUT -s $ip -j DROP; iptables -D OUTPUT -d $ip -j DROP" ) &
+      HEAL_PID=$!
       ;;
   esac
   new=$old
@@ -85,8 +75,7 @@ YAML
     done
   fi
   kubectl -n $NS wait --for=condition=complete job/write-probe --timeout=300s >/dev/null || true
-  kubectl -n $NS delete podchaos kill-primary --ignore-not-found >/dev/null
-  kubectl -n $NS delete networkchaos isolate-primary --ignore-not-found >/dev/null
+  [[ -n "${HEAL_PID:-}" ]] && { wait "$HEAL_PID" || true; HEAL_PID=""; }
   wait_healthy 420 && t_healed=$(now_ms) || t_healed=""
   kubectl -n $NS logs job/write-probe > "$RESULTS/$run.log"
 

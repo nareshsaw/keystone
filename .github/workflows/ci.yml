@@ -170,7 +170,6 @@ jobs:
           kubectl -n cnpg-system logs deploy/plugin-barman-cloud --tail=80 || true
           kubectl -n monitoring get pods,prometheusrules,podmonitors -A 2>/dev/null | head -60 || true
           kubectl -n orders get rollout,analysisruns,jobs -o wide || true
-          kubectl -n orders get podchaos,networkchaos -o wide 2>/dev/null || true
           kubectl -n orders logs job/write-probe --tail=20 2>/dev/null || true
           kubectl -n orders logs job/orders-migrate --tail=30 || true
           kubectl -n backup-store logs deploy/object-store --tail=50 || true

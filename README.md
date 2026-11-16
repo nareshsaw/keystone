@@ -110,8 +110,8 @@ See the latest run's Summary page for the measured numbers.
 
 | Experiment | What it proves |
 |---|---|
-| Kill the primary pod (Chaos Mesh) | automatic failover; time to new primary and longest write gap measured; **0 acknowledged writes lost** |
-| Cut the primary off the network for 60 s | no split brain: exactly **one** instance accepts writes; old primary rejoins as a replica; **0 lost** |
+| Kill the primary pod (force delete, no grace period) | automatic failover; time to new primary and longest write gap measured; **0 acknowledged writes lost** |
+| Cut the primary off the network for 60 s (packets dropped at its node) | no split brain: exactly **one** instance accepts writes; old primary rejoins as a replica; **0 lost** |
 | Point-in-time restore drill | a backup restored from S3 to an exact second contains what it should, and nothing after |
 
 Details: [ADR 0006](docs/adr/0006-resilience-testing.md).

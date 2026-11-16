@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ENDPOINT = "https://models.github.ai/inference/chat/completions"
@@ -60,17 +61,34 @@ def write_with_ai(findings: list[dict], total: float, token: str, model: str, in
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
                  "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"},
     )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            raw = r.read().decode("utf-8", "replace")
-            status = r.status
-    except urllib.error.HTTPError as exc:  # surface rate limits / permission problems clearly
-        raise RuntimeError(f"HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:300]}") from exc
+    raw, status = _post_following_redirects(req, timeout)
     try:
         body = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise RuntimeError(f"HTTP {status}, non-JSON response: {raw[:300]!r}") from exc
     return body["choices"][0]["message"]["content"].strip()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):  # let us handle redirects ourselves
+        return None
+
+
+def _post_following_redirects(req: urllib.request.Request, timeout: float, hops: int = 3) -> tuple[str, int]:
+    """urllib turns a redirected POST into a bodiless GET (the endpoint then answers 200 "OK").
+    Re-POST to the Location instead, like `curl -L` does for this API."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(hops + 1):
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                return r.read().decode("utf-8", "replace"), r.status
+        except urllib.error.HTTPError as exc:
+            if exc.code in (301, 302, 303, 307, 308) and exc.headers.get("Location"):
+                req = urllib.request.Request(urllib.parse.urljoin(req.full_url, exc.headers["Location"]),
+                                             data=req.data, headers=dict(req.header_items()), method="POST")
+                continue
+            raise RuntimeError(f"HTTP {exc.code}: {exc.read().decode('utf-8', 'replace')[:300]}") from exc
+    raise RuntimeError("too many redirects")
 
 
 def template(findings: list[dict], total: float, increase: float = 0.0) -> str:
