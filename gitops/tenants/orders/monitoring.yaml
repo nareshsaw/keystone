@@ -8,6 +8,10 @@ spec:
   podMetricsEndpoints:
     - port: http
       path: /metrics
+      relabelings:
+        # Lets canary analysis and SLOs tell the canary's pods from the stable ones.
+        - sourceLabels: [__meta_kubernetes_pod_label_rollouts_pod_template_hash]
+          targetLabel: rollouts_pod_template_hash
 ---
 # Synthetic user traffic so SLOs, dashboards and the FinOps advisor have real signal.
 # (Phase 6 replaces this with k6 load tests during chaos experiments.)

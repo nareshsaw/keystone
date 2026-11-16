@@ -1,10 +1,14 @@
-apiVersion: apps/v1
-kind: Deployment
+# The orders API ships through an Argo Rollouts canary: 25% -> 50% -> 100%, and each step must pass
+# an SLO analysis against Prometheus (error rate and p99 latency of the canary pods only).
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: orders
   labels: { app: orders }
+  annotations: { argocd.argoproj.io/sync-wave: "2" }
 spec:
-  replicas: 2
+  replicas: 4
+  revisionHistoryLimit: 3
   selector:
     matchLabels: { app: orders }
   template:
@@ -21,6 +25,8 @@ spec:
           ports:
             - { containerPort: 8080, name: http }
           env:
+            - { name: APP_VERSION, value: v1 }
+            - { name: FAULT_RATE, value: "0" }
             - { name: PGHOST, value: orders-db-pooler-rw }
             - { name: PGPORT, value: "5432" }
             - { name: PGDATABASE, value: orders }
@@ -41,6 +47,55 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
+  strategy:
+    canary:
+      steps:
+        - setWeight: 25
+        - pause: { duration: 30s }
+        - analysis:
+            templates: [{ templateName: orders-slo }]
+            args:
+              - name: canary-hash
+                valueFrom: { podTemplateHashValue: Latest }
+        - setWeight: 50
+        - pause: { duration: 30s }
+        - analysis:
+            templates: [{ templateName: orders-slo }]
+            args:
+              - name: canary-hash
+                valueFrom: { podTemplateHashValue: Latest }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: orders-slo
+spec:
+  args:
+    - name: canary-hash
+  metrics:
+    - name: error-rate
+      # Same SLI as the availability SLO, scoped to the canary's pods. Budget: < 1% errors.
+      interval: 20s
+      count: 3
+      failureLimit: 0
+      successCondition: result[0] < 0.01
+      provider:
+        prometheus:
+          address: http://kps-prometheus.monitoring.svc:9090
+          query: |
+            (sum(rate(http_requests_total{namespace="orders",rollouts_pod_template_hash="{{args.canary-hash}}",route!~"/healthz|/readyz|/metrics",code=~"5.."}[1m])) or vector(0))
+            /
+            sum(rate(http_requests_total{namespace="orders",rollouts_pod_template_hash="{{args.canary-hash}}",route!~"/healthz|/readyz|/metrics"}[1m]))
+    - name: p99-latency
+      interval: 20s
+      count: 3
+      failureLimit: 0
+      successCondition: result[0] < 0.3
+      provider:
+        prometheus:
+          address: http://kps-prometheus.monitoring.svc:9090
+          query: |
+            histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace="orders",rollouts_pod_template_hash="{{args.canary-hash}}",route!~"/healthz|/readyz|/metrics"}[1m])))
 ---
 apiVersion: v1
 kind: Service

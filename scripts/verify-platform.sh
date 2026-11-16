@@ -53,7 +53,11 @@ B=$(kubectl -n "$NS" get backups -o json \
       | "backup \(.backupId) · WAL \(.beginWal) → \(.endWal)"')
 row "Base backup" "✅" "$B"
 
-kubectl -n "$NS" rollout status deploy/orders --timeout=300s >/dev/null || fail "App rollout" "orders not ready"
+for _ in $(seq 1 60); do
+  [[ "$(kubectl -n "$NS" get rollout orders -o jsonpath='{.status.phase}')" == "Healthy" ]] && break
+  sleep 5
+done
+[[ "$(kubectl -n "$NS" get rollout orders -o jsonpath='{.status.phase}')" == "Healthy" ]] || fail "App rollout" "orders not Healthy"
 kubectl -n "$NS" port-forward svc/orders 18080:80 >/dev/null 2>&1 &
 PF=$!; trap 'kill $PF 2>/dev/null || true' EXIT; sleep 3
 for n in $(seq 1 20); do

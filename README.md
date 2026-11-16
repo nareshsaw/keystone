@@ -91,6 +91,18 @@ database (as `cnpg_metrics_exporter`) and runs a catalog query on each scrape, s
   failures, backup freshness, connection saturation
 - The official CloudNativePG Grafana dashboard, provisioned through GitOps
 
+## Safe change: migrations and canaries
+
+| Proof in CI | Result |
+|---|---|
+| Migrations applied by GitOps *before* the app (sync wave 1 → 2) | ✅ |
+| `ADD COLUMN … DEFAULT` + `CREATE INDEX CONCURRENTLY` while traffic is flowing | ✅ **0 failed requests** |
+| Release with 50% errors shipped | ⛔ SLO analysis fails at 25% traffic → **automatic rollback** |
+| Good release shipped | ✅ promoted 25% → 50% → 100% after passing every SLO analysis |
+| Dangerous migrations (non-concurrent index, type change, required column, no lock timeout) | ⛔ rejected by Squawk in CI |
+
+Details: [ADR 0004](docs/adr/0004-zero-downtime-migrations.md), [ADR 0005](docs/adr/0005-slo-gated-canaries.md).
+
 ## What runs today
 
 ```mermaid
@@ -156,7 +168,7 @@ make down
 | 3. Self-service: Crossplane `PostgresDatabase` API (S/M/L tiers), Gatekeeper guardrails, FinOps showback and budgets | ✅ |
 | 4. Observability: Prometheus, Grafana, SLOs with burn-rate alerts (Sloth), database alerts + runbooks | ✅ |
 | 4b. **AI FinOps advisor**: right-sizing and hibernation PRs from real usage, AI-written and guardrail-checked | ✅ |
-| 5. Safe change: Atlas migration linting, expand/contract, SLO-gated canaries (Argo Rollouts) | ⏳ |
+| 5. Safe change: Squawk migration linting, expand/contract migrations, SLO-gated canaries (Argo Rollouts) | ✅ |
 | 6. Resilience proof: chaos failovers under load (RTO/RPO measured), automated restore tests | ⏳ |
 
 ## Architecture decisions
@@ -164,6 +176,8 @@ make down
 - [ADR 0001: CloudNativePG over RDS/Patroni](docs/adr/0001-cloudnativepg-operator.md)
 - [ADR 0002: Quorum synchronous replication](docs/adr/0002-synchronous-quorum-replication.md)
 - [ADR 0003: Backups to S3-compatible storage](docs/adr/0003-backups-object-store.md)
+- [ADR 0004: Zero-downtime schema migrations](docs/adr/0004-zero-downtime-migrations.md)
+- [ADR 0005: Canary releases gated by the SLO](docs/adr/0005-slo-gated-canaries.md)
 
 ## Results
 

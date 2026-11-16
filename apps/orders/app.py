@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -25,14 +26,9 @@ ROUTES = {"/", "/healthz", "/readyz", "/metrics", "/orders", "/orders/stats", "/
 
 log = logging.getLogger("orders")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS orders (
-    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    item       TEXT        NOT NULL CHECK (length(item) BETWEEN 1 AND 100),
-    quantity   INTEGER     NOT NULL CHECK (quantity > 0),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-)
-"""
+# Fault injection for canary demos: FAULT_RATE=0.3 makes 30% of business requests fail with 500.
+FAULT_RATE = float(os.environ.get("FAULT_RATE", "0"))
+EXTRA_LATENCY_MS = int(os.environ.get("EXTRA_LATENCY_MS", "0"))
 
 
 def connect() -> psycopg.Connection:
@@ -72,7 +68,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # structured-ish access log
         log.info("%s %s", self.command, self.path)
 
+    def _faulty(self) -> bool:
+        if EXTRA_LATENCY_MS:
+            time.sleep(EXTRA_LATENCY_MS / 1000)
+        return FAULT_RATE > 0 and random.random() < FAULT_RATE  # noqa: S311 - not security sensitive
+
     def do_GET(self):
+        if self.path == "/orders/stats" and self._faulty():
+            return self._send(500, {"error": "injected fault"})
         try:
             if self.path == "/metrics":
                 return self._send(200, generate_latest(), CONTENT_TYPE_LATEST)
@@ -97,14 +100,19 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path != "/orders":
             return self._send(404, {"error": "not found"})
+        if self._faulty():
+            return self._send(500, {"error": "injected fault"})
         try:
             length = int(self.headers.get("Content-Length", 0))
-            item, qty = validate(json.loads(self.rfile.read(length) or b"{}"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+            item, qty = validate(body)
+            email = body.get("customer_email") if isinstance(body.get("customer_email"), str) else None
         except (ValueError, json.JSONDecodeError) as exc:
             return self._send(400, {"error": str(exc)})
         try:
             (order_id,) = with_retry(lambda c: c.execute(
-                "INSERT INTO orders (item, quantity) VALUES (%s, %s) RETURNING id", (item, qty)).fetchone())
+                "INSERT INTO orders (item, quantity, customer_email) VALUES (%s, %s, %s) RETURNING id",
+                (item, qty, email)).fetchone())
         except psycopg.Error as exc:
             return self._send(503, {"error": "database unavailable", "detail": str(exc).strip()})
         return self._send(201, {"id": order_id, "item": item, "quantity": qty})
@@ -112,7 +120,9 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    with_retry(lambda c: c.execute(SCHEMA), attempts=30, delay=1)  # Phase 5 replaces this with Atlas migrations
+    # The schema is owned by versioned migrations (gitops/tenants/orders/migrations), applied by a Job
+    # before this release rolls out. The app only waits for the database to be reachable.
+    with_retry(lambda c: c.execute("SELECT 1"), attempts=30, delay=1)
     port = int(os.environ.get("PORT", "8080"))
     log.info("listening on :%d", port)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

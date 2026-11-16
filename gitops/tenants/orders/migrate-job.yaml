@@ -1,0 +1,42 @@
+# Applies versioned schema migrations before the new app version rolls out (sync wave 1; the app is wave 2).
+# Connects straight to the primary, not through PgBouncer: migrations use session-level settings and an
+# advisory lock that transaction pooling would break.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: orders-migrate
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  backoffLimit: 6
+  activeDeadlineSeconds: 900
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: migrate/migrate:v4.20.1
+          command: [sh, -c]
+          # x-multi-statement: run statements one by one, outside a transaction, so CREATE INDEX CONCURRENTLY works.
+          args: ['migrate -path /migrations -database "${PGURI}?sslmode=require&x-multi-statement=true" up']
+          env:
+            - name: PGURI
+              valueFrom: { secretKeyRef: { name: orders-db-app, key: uri } }
+          volumeMounts:
+            - { name: migrations, mountPath: /migrations, readOnly: true }
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      volumes:
+        - name: migrations
+          configMap: { name: orders-migrations }

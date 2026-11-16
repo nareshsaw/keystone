@@ -149,6 +149,25 @@ spec:
             requests: { cpu: 50m, memory: 128Mi }
 {{- include "keystone.syncPolicy" . }}
 ---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argo-rollouts
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: argo-rollouts }
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argo-rollouts
+    targetRevision: 2.43.12
+    helm:
+      valuesObject:
+        controller: { replicas: 1 }
+{{- include "keystone.syncPolicy" . }}
+---
 # ---------------------------------------------------------------- wave 2: backup plugin
 apiVersion: argoproj.io/v1alpha1
 kind: Application
