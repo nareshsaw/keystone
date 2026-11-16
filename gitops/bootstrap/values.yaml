@@ -1,0 +1,3 @@
+repoURL: https://github.com/nareshsaw/keystone.git
+# Git revision every child app tracks. CI overrides it with the commit SHA under test.
+revision: main

@@ -1,0 +1,97 @@
+name: keystone-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Lint manifests, scripts and app
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install kubeconform
+        run: |
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz | tar -xz kubeconform
+          sudo mv kubeconform /usr/local/bin/
+      - name: Validate Kubernetes manifests (incl. CRDs)
+        run: |
+          helm lint gitops/bootstrap
+          helm template keystone gitops/bootstrap > /tmp/apps.yaml
+          kubeconform -strict -summary -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /tmp/apps.yaml gitops/platform gitops/tenants kind/cluster.yaml
+      - name: ShellCheck
+        run: shellcheck scripts/*.sh
+      - name: App unit tests
+        working-directory: apps/orders
+        run: |
+          pip install pytest
+          pytest -q
+
+  terraform:
+    name: Terraform (fmt, validate, tflint, checkov)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/aws
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.17.2
+      - uses: terraform-linters/setup-tflint@v6
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false
+      - run: terraform validate
+      - run: tflint --init && tflint --format compact
+      - name: Checkov
+        run: |
+          pip install --quiet checkov
+          checkov -d . --framework terraform --config-file .checkov.yaml --quiet --compact
+
+  e2e:
+    name: Platform on Kubernetes (kind)
+    needs: [static]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: keystone
+          config: kind/cluster.yaml
+      - name: Build the sample app and load it into kind
+        run: |
+          docker build -t keystone/orders:dev apps/orders
+          kind load docker-image keystone/orders:dev --name keystone
+      - name: Bootstrap Argo CD and hand over to GitOps (this commit)
+        run: scripts/bootstrap.sh "${{ github.event.pull_request.head.sha || github.sha }}"
+      - name: Wait for every app to be Synced and Healthy
+        run: scripts/wait-for-apps.sh 1500
+      - name: Verify HA, replication, backups and the app
+        run: scripts/verify-platform.sh
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get applications -n argocd -o wide || true
+          kubectl get pods -A -o wide || true
+          kubectl -n orders get cluster,backups,poolers,objectstores -o wide || true
+          kubectl -n orders describe cluster orders-db | tail -60 || true
+          kubectl -n cnpg-system logs deploy/plugin-barman-cloud --tail=80 || true
+          kubectl -n backup-store logs deploy/object-store --tail=50 || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -60 || true

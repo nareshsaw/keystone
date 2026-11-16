@@ -1,0 +1,133 @@
+# RustFS: S3-compatible object storage for WAL archives and base backups, served over TLS.
+# Stands in for Amazon S3 locally (terraform/aws creates the real bucket on AWS).
+# Credentials are NOT in Git: scripts/bootstrap.sh generates the "backup-store-credentials" secret.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: object-store-tls
+spec:
+  secretName: object-store-tls
+  commonName: object-store
+  dnsNames:
+    - object-store
+    - object-store.backup-store
+    - object-store.backup-store.svc
+    - object-store.backup-store.svc.cluster.local
+  duration: 2160h
+  renewBefore: 360h
+  usages: [server auth]
+  issuerRef: { name: keystone-ca, kind: ClusterIssuer, group: cert-manager.io }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: object-store
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: object-store
+  labels: { app: object-store }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: object-store }
+  template:
+    metadata:
+      labels: { app: object-store }
+    spec:
+      securityContext:
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: init-permissions
+          # busybox 1.38.0
+          image: docker.io/library/busybox@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4
+          command: [sh, -c, "mkdir -p /data/rustfs /logs/rustfs && chmod 0777 /data/rustfs /logs/rustfs"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: logs, mountPath: /logs }
+      containers:
+        - name: rustfs
+          # rustfs 1.0.4-glibc (same pinned digest the CloudNativePG backup plugin tests against)
+          image: docker.io/rustfs/rustfs@sha256:a9b705b9256be756802a60f3498abdc543918b5b5a4437a57a541e89e733c74d
+          command: [/usr/bin/rustfs]
+          ports:
+            - { containerPort: 9000, name: api }
+          env:
+            - { name: RUSTFS_ADDRESS, value: ":9000" }
+            - { name: RUSTFS_VOLUMES, value: /data/rustfs }
+            - { name: RUSTFS_REGION, value: us-east-1 }
+            - { name: RUSTFS_CONSOLE_ENABLE, value: "false" }
+            - { name: RUSTFS_OBS_LOG_DIRECTORY, value: /logs/rustfs }
+            - { name: RUSTFS_TLS_PATH, value: /certs }
+            - name: RUSTFS_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: backup-store-credentials, key: ACCESS_KEY_ID } }
+            - name: RUSTFS_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: backup-store-credentials, key: ACCESS_SECRET_KEY } }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /health, port: 9000, scheme: HTTPS }
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health, port: 9000, scheme: HTTPS }
+            initialDelaySeconds: 30
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: logs, mountPath: /logs }
+            - { name: certs, mountPath: /certs, readOnly: true }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: object-store }
+        - name: logs
+          emptyDir: {}
+        - name: certs
+          secret:
+            secretName: object-store-tls
+            items:
+              - { key: tls.crt, path: rustfs_cert.pem }
+              - { key: tls.key, path: rustfs_key.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: object-store
+spec:
+  selector: { app: object-store }
+  ports:
+    - { name: api, port: 9000, targetPort: 9000 }
+---
+# Only Postgres instances (WAL archiving / backups) may reach the object store.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: object-store-ingress
+spec:
+  podSelector:
+    matchLabels: { app: object-store }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchExpressions:
+              - { key: cnpg.io/cluster, operator: Exists }
+      ports:
+        - { port: 9000, protocol: TCP }

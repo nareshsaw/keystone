@@ -1,0 +1,33 @@
+# Minimal Argo CD for the platform. Installed once by scripts/bootstrap.sh; everything else is GitOps.
+dex:
+  enabled: false
+notifications:
+  enabled: false
+configs:
+  params:
+    server.insecure: true
+  cm:
+    # App-of-apps: make parent apps wait for child apps to be Healthy so sync waves are honoured.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+    # A CloudNativePG cluster is only Healthy once all instances are up and replicating.
+    resource.customizations.health.postgresql.cnpg.io_Cluster: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = "Waiting for cluster"
+      if obj.status ~= nil and obj.status.phase ~= nil then
+        hs.message = obj.status.phase
+        if obj.status.phase == "Cluster in healthy state" then
+          hs.status = "Healthy"
+        end
+      end
+      return hs

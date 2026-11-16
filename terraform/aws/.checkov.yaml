@@ -1,0 +1,6 @@
+# Accepted risks for a portfolio/dev footprint. Each skip is a conscious, documented decision.
+skip-check:
+  - CKV_AWS_18   # S3 access logging: would need a separate log bucket; CloudTrail data events cover audit in prod
+  - CKV_AWS_144  # Cross-region replication: single-region by design here; enable for a real DR tier
+  - CKV_AWS_145  # Customer-managed KMS key: AWS-managed aws:kms key is used to avoid per-key cost
+  - CKV2_AWS_62  # S3 event notifications: not needed for backup storage

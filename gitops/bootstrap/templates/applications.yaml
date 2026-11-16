@@ -1,0 +1,112 @@
+{{- $repo := .Values.repoURL -}}
+{{- $rev := .Values.revision -}}
+{{- define "keystone.syncPolicy" }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 3m
+{{- end }}
+# ---------------------------------------------------------------- wave 0: certificates
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cert-manager
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "0" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  source:
+    repoURL: https://charts.jetstack.io
+    chart: cert-manager
+    targetRevision: v1.21.3
+    helm:
+      valuesObject:
+        crds: { enabled: true }
+{{- include "keystone.syncPolicy" . }}
+---
+# ---------------------------------------------------------------- wave 1: Postgres operator + PKI
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudnative-pg
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: cnpg-system }
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: cloudnative-pg
+    targetRevision: 0.29.1
+{{- include "keystone.syncPolicy" . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-pki
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: cert-manager }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/pki }
+{{- include "keystone.syncPolicy" . }}
+---
+# ---------------------------------------------------------------- wave 2: backup plugin
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: plugin-barman-cloud
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "2" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: cnpg-system }
+  source:
+    repoURL: https://cloudnative-pg.github.io/charts
+    chart: plugin-barman-cloud
+    targetRevision: 0.9.0
+{{- include "keystone.syncPolicy" . }}
+---
+# ---------------------------------------------------------------- wave 3: S3-compatible backup store
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backup-store
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "3" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: backup-store }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/object-store }
+{{- include "keystone.syncPolicy" . }}
+---
+# ---------------------------------------------------------------- wave 4: tenants
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant-orders
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "4" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: orders }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/tenants/orders }
+{{- include "keystone.syncPolicy" . }}
