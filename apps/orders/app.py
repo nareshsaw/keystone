@@ -79,6 +79,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/metrics":
                 return self._send(200, generate_latest(), CONTENT_TYPE_LATEST)
+            if self.path == "/":
+                return self._send(200, {"service": "orders", "version": os.environ.get("APP_VERSION", "dev")})
             if self.path == "/healthz":
                 return self._send(200, {"status": "ok"})
             if self.path == "/readyz":

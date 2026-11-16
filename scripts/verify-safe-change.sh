@@ -86,16 +86,22 @@ if wait_phase Degraded 420; then
   DUR=$((SECONDS - START))
   AR=$(kubectl -n $NS get analysisruns -o json | jq -r '[.items[] | select(.status.phase=="Failed")] | sort_by(.metadata.creationTimestamp) | last')
   WHY=$(jq -r '[.status.metricResults[] | select(.phase=="Failed") | "\(.name)=\(.measurements[-1].value)"] | join(", ")' <<<"$AR")
-  sleep 20
-  CANARY_PODS=$(kubectl -n $NS get pods -l app=orders --field-selector=status.phase=Running \
-    -o jsonpath='{range .items[*]}{.metadata.labels.rollouts-pod-template-hash}{"\n"}{end}' | grep -vc "^${STABLE}$" || true)
+  # pods keep phase=Running while terminating: only count pods that are not being deleted
+  live_canary() { kubectl -n $NS get pods -l app=orders -o json | jq --arg s "$STABLE" \
+    '[.items[] | select(.metadata.deletionTimestamp == null and .metadata.labels["rollouts-pod-template-hash"] != $s)] | length'; }
+  for _ in $(seq 1 24); do [[ "$(live_canary)" -eq 0 ]] && break; sleep 5; done
+  CANARY_PODS=$(live_canary)
   STILL=$(kubectl -n $NS get rollout orders -o jsonpath='{.status.stableRS}')
   if [[ "$STILL" == "$STABLE" && "$CANARY_PODS" -eq 0 ]]; then
     row "Bad release (50% errors) rolled back" "✅" "SLO analysis failed (${WHY}) at 25% traffic; aborted after ${DUR}s, stable version kept serving"
-  else row "Bad release rolled back" "❌" "stable=$STILL (was $STABLE), canary pods left=$CANARY_PODS"; FAILED=1; fi
+  else row "Bad release rolled back" "❌" "stable=$STILL (was $STABLE), canary pods left=$CANARY_PODS, analysis: ${WHY}"; FAILED=1; fi
   sleep 30
-  BLAST=$(awk "BEGIN{printf \"%d\", $(errors) - $E0}")
-  row "Blast radius of the bad release" "✅" "${BLAST} failed requests in total before the rollback (only the canary's share of traffic)"
+  # increase() per series survives the canary pods (and their counters) disappearing
+  WIN=$(( SECONDS - START + 30 ))
+  BLAST=$(prom_value "sum(increase(http_requests_total{$BIZ,code=~\"5..\"}[${WIN}s])) or vector(0)")
+  SERVED=$(prom_value "sum(increase(http_requests_total{$BIZ}[${WIN}s]))")
+  PCT=$(awk "BEGIN{printf \"%.1f\", (${SERVED:-0} > 0 ? 100 * ${BLAST:-0} / ${SERVED} : 0)}")
+  row "Blast radius of the bad release" "✅" "$(printf '%.0f' "${BLAST:-0}") of $(printf '%.0f' "${SERVED:-0}") requests failed (${PCT}%) during the canary; a full rollout would have failed ~50%"
 else row "Bad release rolled back" "❌" "rollout phase $(phase) after 420s"; FAILED=1; fi
 
 # ---------------------------------------------------------------- 4. good release -> promoted
@@ -107,7 +113,7 @@ sleep 10
 if wait_phase Healthy 600; then
   DUR=$((SECONDS - START))
   kubectl -n $NS port-forward svc/orders 18081:80 >/dev/null 2>&1 & PF2=$!; sleep 3
-  VER=$(curl -sf localhost:18081/ | jq -r .version); kill $PF2 2>/dev/null || true
+  VER=$(curl -s localhost:18081/ | jq -r '.version // "unknown"' || true); kill $PF2 2>/dev/null || true
   RUNS=$(kubectl -n $NS get analysisruns -o json | jq '[.items[] | select(.status.phase=="Successful")] | length')
   if [[ "$VER" == "v2" ]]; then
     row "Good release promoted" "✅" "25% → 50% → 100% in ${DUR}s, ${RUNS} SLO analyses passed, now serving ${VER}"
