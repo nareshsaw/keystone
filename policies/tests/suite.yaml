@@ -72,6 +72,10 @@ tests:
           - { message: "at least 3 instances", violations: 1 }
           - { message: "archive WAL", violations: 1 }
           - { message: "synchronous replication", violations: 1 }
+      - name: labelled-restore-drill-exempt
+        object: samples/cluster-restore-drill.yaml
+        inventory: [samples/namespaces.yaml]
+        assertions: [{ violations: no }]
       - name: single-instance-dev-cluster-allowed
         object: samples/cluster-dev-single.yaml
         inventory: [samples/namespaces.yaml]

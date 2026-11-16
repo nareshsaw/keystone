@@ -48,3 +48,7 @@ spec:
   match:
     kinds:
       - { apiGroups: [postgresql.cnpg.io], kinds: [Cluster] }
+    # Short-lived restore drills (1 instance, no archiving) are exempt; they prove backups restore.
+    labelSelector:
+      matchExpressions:
+        - { key: keystone.io/purpose, operator: NotIn, values: [restore-drill] }

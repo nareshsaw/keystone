@@ -119,7 +119,7 @@ jobs:
     name: Platform on Kubernetes (kind)
     needs: [static]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
       - uses: azure/setup-helm@v5
@@ -145,8 +145,18 @@ jobs:
         run: |
           pip install --quiet pyyaml
           scripts/finops-advisor.sh check
+      - name: Chaos under load - kill the primary, isolate the primary (measured RTO / RPO)
+        run: scripts/chaos-experiments.sh
+      - name: Point-in-time restore drill from the S3 backups
+        run: scripts/restore-drill.sh
       - name: Zero-downtime migration, automatic rollback of a bad release, promotion of a good one
         run: scripts/verify-safe-change.sh
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: chaos-results
+          path: chaos-results/
+          if-no-files-found: ignore
       - name: Diagnostics
         if: failure()
         run: |
@@ -160,6 +170,8 @@ jobs:
           kubectl -n cnpg-system logs deploy/plugin-barman-cloud --tail=80 || true
           kubectl -n monitoring get pods,prometheusrules,podmonitors -A 2>/dev/null | head -60 || true
           kubectl -n orders get rollout,analysisruns,jobs -o wide || true
+          kubectl -n orders get podchaos,networkchaos -o wide 2>/dev/null || true
+          kubectl -n orders logs job/write-probe --tail=20 2>/dev/null || true
           kubectl -n orders logs job/orders-migrate --tail=30 || true
           kubectl -n backup-store logs deploy/object-store --tail=50 || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -60 || true

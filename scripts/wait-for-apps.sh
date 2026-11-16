@@ -2,7 +2,7 @@
 # Waits until every Argo CD application is Synced and Healthy, or fails with diagnostics.
 set -uo pipefail
 TIMEOUT="${1:-1200}"
-EXPECTED="${EXPECTED_APPS:-17}"
+EXPECTED="${EXPECTED_APPS:-18}"
 deadline=$((SECONDS + TIMEOUT))
 while (( SECONDS < deadline )); do
   status=$(kubectl get applications -n argocd \

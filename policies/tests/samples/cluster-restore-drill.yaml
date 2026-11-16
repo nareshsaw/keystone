@@ -1,0 +1,10 @@
+# A one-off restore drill in prod: exempt from the HA rules by its label.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: orders-restore-drill
+  namespace: orders
+  labels: { keystone.io/purpose: restore-drill }
+spec:
+  instances: 1
+  storage: { size: 2Gi }

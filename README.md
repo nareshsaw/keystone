@@ -103,6 +103,19 @@ database (as `cnpg_metrics_exporter`) and runs a catalog query on each scrape, s
 
 Details: [ADR 0004](docs/adr/0004-zero-downtime-migrations.md), [ADR 0005](docs/adr/0005-slo-gated-canaries.md).
 
+## Resilience: proven on every push
+
+Chaos experiments run under a constant **20 writes/s** (k6), and every acknowledged write is checked afterwards.
+See the latest run's Summary page for the measured numbers.
+
+| Experiment | What it proves |
+|---|---|
+| Kill the primary pod (Chaos Mesh) | automatic failover; time to new primary and longest write gap measured; **0 acknowledged writes lost** |
+| Cut the primary off the network for 60 s | no split brain: exactly **one** instance accepts writes; old primary rejoins as a replica; **0 lost** |
+| Point-in-time restore drill | a backup restored from S3 to an exact second contains what it should, and nothing after |
+
+Details: [ADR 0006](docs/adr/0006-resilience-testing.md).
+
 ## What runs today
 
 ```mermaid
@@ -169,7 +182,7 @@ make down
 | 4. Observability: Prometheus, Grafana, SLOs with burn-rate alerts (Sloth), database alerts + runbooks | ✅ |
 | 4b. **AI FinOps advisor**: right-sizing and hibernation PRs from real usage, AI-written and guardrail-checked | ✅ |
 | 5. Safe change: Squawk migration linting, expand/contract migrations, SLO-gated canaries (Argo Rollouts) | ✅ |
-| 6. Resilience proof: chaos failovers under load (RTO/RPO measured), automated restore tests | ⏳ |
+| 6. Resilience proof: chaos failovers under load (RTO/RPO measured), point-in-time restore drills | ✅ |
 
 ## Architecture decisions
 
@@ -178,6 +191,7 @@ make down
 - [ADR 0003: Backups to S3-compatible storage](docs/adr/0003-backups-object-store.md)
 - [ADR 0004: Zero-downtime schema migrations](docs/adr/0004-zero-downtime-migrations.md)
 - [ADR 0005: Canary releases gated by the SLO](docs/adr/0005-slo-gated-canaries.md)
+- [ADR 0006: Proving resilience under load](docs/adr/0006-resilience-testing.md)
 
 ## Results
 

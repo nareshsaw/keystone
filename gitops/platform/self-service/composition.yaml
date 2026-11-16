@@ -187,6 +187,9 @@ spec:
                 parameters:
                   max_client_conn: "500"
                   default_pool_size: "20"
+                  # Drop a server connection whose packets go unacknowledged for 5 s. Without this, a primary
+                  # that vanishes from the network leaves pooled connections hanging for minutes after failover.
+                  tcp_user_timeout: "5000"
             {{- end }}
             ---
             # Metrics for every instance (CNPG exporter) -> Prometheus. Feeds alerts, dashboards and the FinOps advisor.
