@@ -15,3 +15,6 @@ rules:
   - apiGroups: [cert-manager.io]
     resources: [certificates]
     verbs: ["*"]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [podmonitors]
+    verbs: ["*"]

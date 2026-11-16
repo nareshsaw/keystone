@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch: # lets the FinOps advisor run these guardrails on the PRs it opens
 
 permissions:
   contents: read
@@ -56,11 +57,17 @@ jobs:
             -schema-location default \
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             -skip PostgresDatabase /tmp/render-*.yaml
-      - name: App unit tests
-        working-directory: apps/orders
+      - name: App and FinOps advisor unit tests
         run: |
-          pip install pytest
-          pytest -q
+          pip install pytest pyyaml
+          (cd apps/orders && pytest -q)
+          (cd tools/finops-advisor && pytest -q)
+      - name: SLO rules are up to date (sloth generate)
+        run: |
+          curl -sSfL -o sloth https://github.com/slok/sloth/releases/download/v0.16.0/sloth-linux-amd64 && chmod +x sloth
+          ./sloth generate -i slos/orders.yaml -o /tmp/slo-orders.yaml
+          diff -u gitops/platform/observability-config/slo-orders.yaml /tmp/slo-orders.yaml \
+            || { echo "::error::Run 'make slo' and commit the regenerated rules"; exit 1; }
 
   terraform:
     name: Terraform (fmt, validate, tflint, checkov)
@@ -107,6 +114,12 @@ jobs:
         run: scripts/verify-platform.sh
       - name: Verify self-service databases and guardrails
         run: scripts/verify-self-service.sh
+      - name: Verify observability and SLOs
+        run: scripts/verify-observability.sh
+      - name: FinOps advisor finds the idle and the over-provisioned database
+        run: |
+          pip install --quiet pyyaml
+          scripts/finops-advisor.sh check
       - name: Diagnostics
         if: failure()
         run: |
@@ -118,5 +131,6 @@ jobs:
           kubectl -n orders get cluster,backups,poolers,objectstores -o wide || true
           kubectl -n orders describe cluster orders-db | tail -60 || true
           kubectl -n cnpg-system logs deploy/plugin-barman-cloud --tail=80 || true
+          kubectl -n monitoring get pods,prometheusrules,podmonitors -A 2>/dev/null | head -60 || true
           kubectl -n backup-store logs deploy/object-store --tail=50 || true
           kubectl get events -A --sort-by=.lastTimestamp | tail -60 || true

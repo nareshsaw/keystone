@@ -1,0 +1,46 @@
+# Service level objectives for the orders API. `make slo` turns this into Prometheus rules
+# (multi-window, multi-burn-rate alerts) in gitops/platform/observability-config/slo-orders.yaml.
+apiVersion: sloth.slok.dev/v1
+kind: PrometheusServiceLevel
+metadata:
+  name: orders
+  namespace: monitoring
+spec:
+  service: orders
+  labels:
+    owner: team-orders
+    tier: "1"
+  slos:
+    - name: requests-availability
+      objective: 99.9
+      description: 99.9% of orders API requests succeed (non-5xx), measured at the app.
+      sli:
+        events:
+          errorQuery: sum(rate(http_requests_total{namespace="orders",route!~"/healthz|/readyz|/metrics",code=~"5.."}[{{.window}}]))
+          totalQuery: sum(rate(http_requests_total{namespace="orders",route!~"/healthz|/readyz|/metrics"}[{{.window}}]))
+      alerting:
+        name: OrdersHighErrorRate
+        annotations:
+          summary: Orders API is burning its availability error budget too fast.
+        pageAlert:
+          labels: { severity: critical }
+        ticketAlert:
+          labels: { severity: warning }
+    - name: requests-latency
+      objective: 99
+      description: 99% of orders API requests complete in under 300 ms.
+      sli:
+        events:
+          errorQuery: |
+            sum(rate(http_request_duration_seconds_count{namespace="orders",route!~"/healthz|/readyz|/metrics"}[{{.window}}]))
+            -
+            sum(rate(http_request_duration_seconds_bucket{namespace="orders",route!~"/healthz|/readyz|/metrics",le="0.3"}[{{.window}}]))
+          totalQuery: sum(rate(http_request_duration_seconds_count{namespace="orders",route!~"/healthz|/readyz|/metrics"}[{{.window}}]))
+      alerting:
+        name: OrdersHighLatency
+        annotations:
+          summary: Orders API is burning its latency error budget too fast.
+        pageAlert:
+          labels: { severity: critical }
+        ticketAlert:
+          labels: { severity: warning }

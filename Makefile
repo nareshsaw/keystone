@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 REVISION ?= main
 
-.PHONY: up cluster app bootstrap wait verify down
+.PHONY: up cluster app bootstrap wait verify down slo finops
 
 up: cluster app bootstrap wait verify   ## Create everything from scratch on a local kind cluster
 
@@ -23,3 +23,9 @@ verify:                                 ## Run the platform acceptance checks
 
 down:                                   ## Delete the kind cluster
 	kind delete cluster --name keystone
+
+slo:                                    ## Regenerate Prometheus SLO rules from slos/*.yaml (needs sloth)
+	sloth generate -i slos/orders.yaml -o gitops/platform/observability-config/slo-orders.yaml
+
+finops:                                 ## Run the FinOps advisor against the local cluster (report only)
+	scripts/finops-advisor.sh check

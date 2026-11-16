@@ -5,3 +5,4 @@ revision: main
 tenants:
   - orders
   - inventory
+  - analytics

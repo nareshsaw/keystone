@@ -1,0 +1,51 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: orders-api
+spec:
+  selector:
+    matchLabels: { app: orders }
+  podMetricsEndpoints:
+    - port: http
+      path: /metrics
+---
+# Synthetic user traffic so SLOs, dashboards and the FinOps advisor have real signal.
+# (Phase 6 replaces this with k6 load tests during chaos experiments.)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-traffic
+  labels: { app: orders-traffic }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: orders-traffic }
+  template:
+    metadata:
+      labels: { app: orders-traffic }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: traffic
+          image: curlimages/curl:8.11.1
+          command: [sh, -c]
+          args:
+            - |
+              i=0
+              while true; do
+                i=$((i+1))
+                curl -s -o /dev/null -X POST http://orders/orders -H 'Content-Type: application/json' \
+                  -d "{\"item\":\"synthetic-$i\",\"quantity\":1}"
+                curl -s -o /dev/null http://orders/orders/stats
+                sleep 0.5
+              done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 32Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

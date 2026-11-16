@@ -1,0 +1,46 @@
+# Database-level alerts for every Keystone tenant. Each alert links to a runbook section.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: keystone-postgres
+spec:
+  groups:
+    - name: keystone-postgres
+      rules:
+        - alert: KeystonePostgresInstanceDown
+          expr: cnpg_collector_up == 0
+          for: 2m
+          labels: { severity: critical }
+          annotations:
+            summary: "Postgres instance {{ $labels.pod }} in {{ $labels.namespace }} is down"
+            runbook: docs/runbooks/postgres.md#instance-down
+        - alert: KeystoneReplicationLagHigh
+          expr: max by (namespace, pod) (cnpg_pg_replication_lag) > 30
+          for: 5m
+          labels: { severity: warning }
+          annotations:
+            summary: "Replica {{ $labels.pod }} is {{ $value | humanizeDuration }} behind the primary"
+            runbook: docs/runbooks/postgres.md#replication-lag
+        - alert: KeystoneWALArchivingFailing
+          expr: increase(cnpg_pg_stat_archiver_failed_count[10m]) > 0
+          labels: { severity: critical }
+          annotations:
+            summary: "WAL archiving is failing for {{ $labels.namespace }}: point-in-time recovery is at risk"
+            runbook: docs/runbooks/postgres.md#wal-archiving
+        - alert: KeystoneBackupTooOld
+          # Base backups run every 6h; two missed runs is an incident.
+          expr: time() - max by (namespace, keystone_database) (barman_cloud_cloudnative_pg_io_last_available_backup_timestamp) > 13 * 3600
+          for: 15m
+          labels: { severity: critical }
+          annotations:
+            summary: "No successful backup of {{ $labels.keystone_database }} for {{ $value | humanizeDuration }}"
+            runbook: docs/runbooks/postgres.md#backup-too-old
+        - alert: KeystoneConnectionsNearLimit
+          expr: |
+            sum by (namespace, pod) (cnpg_backends_total)
+              / on (namespace, pod) max by (namespace, pod) (cnpg_pg_settings_setting{name="max_connections"}) > 0.8
+          for: 10m
+          labels: { severity: warning }
+          annotations:
+            summary: "{{ $labels.pod }} is using {{ $value | humanizePercentage }} of max_connections"
+            runbook: docs/runbooks/postgres.md#connections

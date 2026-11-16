@@ -1,0 +1,41 @@
+# A light, steady workload: one small insert every 2 seconds.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics-writer
+  labels: { app: analytics-writer }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: analytics-writer }
+  template:
+    metadata:
+      labels: { app: analytics-writer }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: writer
+          image: postgres:18-alpine
+          command: [sh, -c]
+          args:
+            - |
+              until psql -c 'CREATE TABLE IF NOT EXISTS events (id bigserial PRIMARY KEY, at timestamptz DEFAULT now(), payload text)'; do sleep 3; done
+              while true; do psql -q -c "INSERT INTO events (payload) VALUES ('page_view')"; sleep 2; done
+          env:
+            - { name: PGHOST, value: analytics-db-pooler-rw }
+            - { name: PGDATABASE, value: analytics }
+            - { name: PGSSLMODE, value: require }
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: analytics-db-app, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: analytics-db-app, key: password } }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }

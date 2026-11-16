@@ -189,6 +189,49 @@ spec:
                   default_pool_size: "20"
             {{- end }}
             ---
+            # Metrics for every instance (CNPG exporter) -> Prometheus. Feeds alerts, dashboards and the FinOps advisor.
+            apiVersion: monitoring.coreos.com/v1
+            kind: PodMonitor
+            metadata:
+              name: {{ $name }}
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: podmonitor
+                {{- if hasKey $observed "podmonitor" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              selector:
+                matchLabels:
+                  cnpg.io/cluster: {{ $name }}
+                  cnpg.io/podRole: instance
+              podMetricsEndpoints:
+                - port: metrics
+                  relabelings:
+                    - { targetLabel: keystone_database, replacement: {{ $name }} }
+                    - { targetLabel: keystone_tier, replacement: {{ $tierName }} }
+                    - { targetLabel: keystone_environment, replacement: {{ $env }} }
+                    - { targetLabel: keystone_cost_center, replacement: {{ $spec.costCenter }} }
+            {{- if and $poolerEnabled (not $hibernate) }}
+            ---
+            apiVersion: monitoring.coreos.com/v1
+            kind: PodMonitor
+            metadata:
+              name: {{ $name }}-pooler
+              labels: {{ toJson $labels }}
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: pooler-podmonitor
+                {{- if hasKey $observed "pooler-podmonitor" }}
+                gotemplating.fn.crossplane.io/ready: "True"
+                {{- end }}
+            spec:
+              selector:
+                matchLabels:
+                  cnpg.io/poolerName: {{ $name }}-pooler-rw
+              podMetricsEndpoints:
+                - port: metrics
+            {{- end }}
+            ---
             apiVersion: platform.keystone.io/v1alpha1
             kind: PostgresDatabase
             status:

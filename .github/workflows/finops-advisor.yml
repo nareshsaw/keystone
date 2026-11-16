@@ -1,0 +1,48 @@
+name: finops-advisor
+
+# Weekly: stand the platform up, let the workloads run, measure real usage in Prometheus, and open a
+# right-sizing pull request whose description is written by AI (GitHub Models, free tier).
+# In a real environment this job points at the production Prometheus instead of a fresh kind cluster.
+on:
+  schedule:
+    - cron: "37 3 * * 1" # Mondays 03:37 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write       # push the proposal branch
+  pull-requests: write  # open the PR
+  models: read          # GitHub Models inference with GITHUB_TOKEN
+  actions: write        # dispatch the guardrail CI on the new branch
+
+concurrency:
+  group: finops-advisor
+  cancel-in-progress: false
+
+jobs:
+  advise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      FINOPS_WINDOW: 10m
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: keystone
+          config: kind/cluster.yaml
+      - name: Build the sample app and load it into kind
+        run: |
+          docker build -t keystone/orders:dev apps/orders
+          kind load docker-image keystone/orders:dev --name keystone
+      - name: Bootstrap the platform from main
+        run: scripts/bootstrap.sh "${{ github.sha }}"
+      - name: Wait for every app to be Synced and Healthy
+        run: scripts/wait-for-apps.sh 1500
+      - name: Let workloads run, then advise and open a pull request
+        run: |
+          pip install --quiet pyyaml
+          sleep 300
+          scripts/finops-advisor.sh pr

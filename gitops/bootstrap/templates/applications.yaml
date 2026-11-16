@@ -102,6 +102,53 @@ spec:
     targetRevision: 2.4.3
 {{- include "keystone.syncPolicy" . }}
 ---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "1" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 93.3.0
+    helm:
+      valuesObject:
+        fullnameOverride: kps
+        # kind has no reachable etcd/scheduler/controller-manager endpoints; skip their noise.
+        kubeEtcd: { enabled: false }
+        kubeScheduler: { enabled: false }
+        kubeControllerManager: { enabled: false }
+        kubeProxy: { enabled: false }
+        nodeExporter: { enabled: false }
+        prometheus:
+          prometheusSpec:
+            retention: 3d
+            scrapeInterval: 15s
+            evaluationInterval: 15s
+            # Pick up PodMonitors / PrometheusRules from every namespace (tenants included).
+            podMonitorSelectorNilUsesHelmValues: false
+            serviceMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+            resources:
+              requests: { cpu: 100m, memory: 400Mi }
+              limits: { memory: 1Gi }
+        alertmanager:
+          alertmanagerSpec:
+            resources:
+              requests: { cpu: 10m, memory: 32Mi }
+        grafana:
+          defaultDashboardsEnabled: false
+          sidecar:
+            dashboards: { enabled: true, searchNamespace: ALL }
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+{{- include "keystone.syncPolicy" . }}
+---
 # ---------------------------------------------------------------- wave 2: backup plugin
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -143,6 +190,19 @@ spec:
   project: default
   destination: { server: https://kubernetes.default.svc, namespace: crossplane-system }
   source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/self-service }
+{{- include "keystone.syncPolicy" . }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: observability-config
+  namespace: argocd
+  annotations: { argocd.argoproj.io/sync-wave: "2" }
+  finalizers: [resources-finalizer.argocd.argoproj.io]
+spec:
+  project: default
+  destination: { server: https://kubernetes.default.svc, namespace: monitoring }
+  source: { repoURL: {{ $repo }}, targetRevision: {{ $rev }}, path: gitops/platform/observability-config }
 {{- include "keystone.syncPolicy" . }}
 ---
 # ---------------------------------------------------------------- wave 3: S3-compatible backup store

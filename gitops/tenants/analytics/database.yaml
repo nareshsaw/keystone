@@ -1,0 +1,12 @@
+# Deliberately over-provisioned: a 'medium' database for a trickle of writes.
+# The FinOps advisor should notice and propose 'small'.
+apiVersion: platform.keystone.io/v1alpha1
+kind: PostgresDatabase
+metadata:
+  name: analytics-db
+spec:
+  environment: dev
+  tier: medium
+  databaseName: analytics
+  owner: team-analytics
+  costCenter: CC-3003

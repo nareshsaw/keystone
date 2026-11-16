@@ -12,8 +12,16 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import psycopg
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 from validation import validate
+
+REQUESTS = Counter("http_requests_total", "HTTP requests", ["method", "route", "code"])
+LATENCY = Histogram(
+    "http_request_duration_seconds", "HTTP request latency", ["method", "route"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.5, 1, 2.5, 5),
+)
+ROUTES = {"/", "/healthz", "/readyz", "/metrics", "/orders", "/orders/stats", "/whoami"}
 
 log = logging.getLogger("orders")
 
@@ -46,19 +54,28 @@ def with_retry(fn, attempts: int = 5, delay: float = 0.5):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, code: int, payload: dict) -> None:
-        body = json.dumps(payload).encode()
+    def _send(self, code: int, payload: dict | bytes, content_type: str = "application/json") -> None:
+        body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
         self.send_response(code)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        route = self.path if self.path in ROUTES else "other"  # bounded label cardinality
+        REQUESTS.labels(self.command, route, str(code)).inc()
+        LATENCY.labels(self.command, route).observe(time.perf_counter() - self._start)
+
+    def handle_one_request(self):
+        self._start = time.perf_counter()
+        super().handle_one_request()
 
     def log_message(self, fmt, *args):  # structured-ish access log
         log.info("%s %s", self.command, self.path)
 
     def do_GET(self):
         try:
+            if self.path == "/metrics":
+                return self._send(200, generate_latest(), CONTENT_TYPE_LATEST)
             if self.path == "/healthz":
                 return self._send(200, {"status": "ok"})
             if self.path == "/readyz":

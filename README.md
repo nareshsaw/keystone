@@ -52,6 +52,39 @@ orders      orders-db      prod   small   3           $21.45       Cluster in he
 The cost model lives in two places that must agree: the composition reports it, the policy enforces it.
 CI renders the composition (`crossplane render`) and asserts the price, and `gator verify` runs 15 policy tests.
 
+## AI FinOps advisor
+
+A weekly job reads **real usage** from Prometheus and proposes right-sizing as a pull request:
+
+| Database | Env | Tier | p95 CPU | Writes/s | Clients | Action | Now | After |
+|---|---|---|---|---|---|---|---|---|
+| inventory-db | dev | small | ~1% | 0 | 0 | 💤 hibernate | $7.22 | $0.28 |
+| analytics-db | dev | medium | ~2% | ~0.5 | 1 | ⬇ small | $30.56 | $7.22 |
+| orders-db | prod | small | — | — | — | — right-sized | $21.45 | $21.45 |
+
+How it stays safe:
+1. **Rules decide, AI explains.** Recommendations and every dollar figure come from deterministic rules
+   ([`rules.py`](tools/finops-advisor/finops_advisor/rules.py)) using the same price model as the budget policy.
+   GitHub Models (free tier, `models: read`) only writes the PR description.
+2. **Hallucination guard.** If the AI text contains any amount the rules didn't compute, or skips a database,
+   it is rejected and a template is used instead.
+3. **Guardrails re-check every proposal.** Changed manifests are validated by Gatekeeper on the live cluster
+   (server-side dry-run) before the PR is opened, and CI runs again on the PR.
+4. **Humans merge.** Prod changes are flagged for review; prod is never hibernated; no recommendation is made
+   without enough data; under-provisioned databases get an *upsize* (FinOps is about value, not only cuts).
+
+Idle detection uses row writes and client connections, not commit counts: the CNPG exporter runs a catalog
+query inside every database on each scrape, so an idle database still "commits".
+
+## Observability and SLOs
+
+- kube-prometheus-stack; every database, pooler and the app are scraped (PodMonitors created by the composition)
+- **SLOs** for the orders API (99.9% availability, 99% under 300 ms) defined in [`slos/`](slos/) and compiled
+  by Sloth into multi-window, multi-burn-rate alerts; CI fails if the generated rules are stale
+- Database alerts with [runbooks](docs/runbooks/postgres.md): instance down, replication lag, WAL archiving
+  failures, backup freshness, connection saturation
+- The official CloudNativePG Grafana dashboard, provisioned through GitOps
+
 ## What runs today
 
 ```mermaid
@@ -115,8 +148,8 @@ make down
 | 1. Foundation: kind, Argo CD app-of-apps, Terraform for EKS | ✅ |
 | 2. Stateful core: CloudNativePG, sync replication, backups to S3, PgBouncer, sample app | ✅ |
 | 3. Self-service: Crossplane `PostgresDatabase` API (S/M/L tiers), Gatekeeper guardrails, FinOps showback and budgets | ✅ |
-| 4. Observability: Prometheus, Grafana, SLOs with burn-rate alerts (Sloth), OpenCost | ⏳ |
-| 4b. **AI FinOps advisor**: finds over-provisioned and idle databases from real usage, opens right-sizing / hibernation PRs that the guardrails re-check | ⏳ |
+| 4. Observability: Prometheus, Grafana, SLOs with burn-rate alerts (Sloth), database alerts + runbooks | ✅ |
+| 4b. **AI FinOps advisor**: right-sizing and hibernation PRs from real usage, AI-written and guardrail-checked | ✅ |
 | 5. Safe change: Atlas migration linting, expand/contract, SLO-gated canaries (Argo Rollouts) | ⏳ |
 | 6. Resilience proof: chaos failovers under load (RTO/RPO measured), automated restore tests | ⏳ |
 

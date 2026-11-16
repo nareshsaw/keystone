@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: analytics
+  labels:
+    keystone.io/tenant: analytics
+    keystone.io/env: dev
+    keystone.io/owner: team-analytics
+    keystone.io/cost-center: CC-3003
+    keystone.io/monthly-budget-usd: "40"
